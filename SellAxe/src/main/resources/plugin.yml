@@ -1,0 +1,15 @@
+name: SellAxe
+version: 1.0.0
+main: com.archiv3s.sellaxe.SellAxePlugin
+api-version: '1.21'
+depend: [Vault]
+softdepend: [EconomyShopGUI]
+commands:
+  sellaxe:
+    description: Get a Sell Axe that sells container contents when broken.
+    usage: /sellaxe
+    permission: sellaxe.use
+permissions:
+  sellaxe.use:
+    description: Use the Sell Axe.
+    default: op
