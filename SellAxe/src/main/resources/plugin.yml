@@ -12,4 +12,4 @@ commands:
 permissions:
   sellaxe.use:
     description: Use the Sell Axe.
-    default: op
+    default: true
