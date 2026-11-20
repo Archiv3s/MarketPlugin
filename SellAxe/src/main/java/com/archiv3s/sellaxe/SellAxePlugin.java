@@ -14,6 +14,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;  
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -128,6 +129,13 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         sellInventory(player, container.getInventory());
     }
 
+    @EventHandler  
+public void onSellAxeHit(EntityDamageByEntityEvent event) {  
+    if (!(event.getDamager() instanceof Player player)) return;  
+    if (!isSellAxe(player.getInventory().getItemInMainHand())) return;  
+    event.setCancelled(true);  
+}  
+    
     private void sellInventory(Player player, Inventory inv) {
         double total = 0;
         int count = 0;
