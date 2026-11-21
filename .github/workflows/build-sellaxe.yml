@@ -1,0 +1,39 @@
+name: Build SellAxe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'SellAxe/**'
+      - '.github/workflows/build-sellaxe.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build jar
+        working-directory: SellAxe
+        run: mvn -B clean package -Dmaven.compiler.source=21 -Dmaven.compiler.target=21
+
+      - name: Verify listener and permission
+        working-directory: SellAxe
+        run: |
+          javap -p -cp target/SellAxe.jar com.archiv3s.sellaxe.SellAxePlugin | grep onSellAxeHit
+          unzip -p target/SellAxe.jar plugin.yml | grep -A2 'sellaxe.use' | grep 'default: true'
+
+      - name: Upload SellAxe.jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: SellAxe-jar
+          path: SellAxe/target/SellAxe.jar
