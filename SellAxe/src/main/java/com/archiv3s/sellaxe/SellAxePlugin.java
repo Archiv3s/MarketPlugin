@@ -14,7 +14,8 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.entity.EntityDamageByEntityEvent;  
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -26,6 +27,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public final class SellAxePlugin extends JavaPlugin implements Listener, CommandExecutor {
@@ -129,13 +131,33 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         sellInventory(player, container.getInventory());
     }
 
-    @EventHandler  
-public void onSellAxeHit(EntityDamageByEntityEvent event) {  
-    if (!(event.getDamager() instanceof Player player)) return;  
-    if (!isSellAxe(player.getInventory().getItemInMainHand())) return;  
-    event.setCancelled(true);  
-}  
-    
+    @EventHandler
+    public void onSellAxeHit(EntityDamageByEntityEvent event) {
+        if (!(event.getDamager() instanceof Player player)) return;
+        if (!isSellAxe(player.getInventory().getItemInMainHand())) return;
+        event.setCancelled(true);
+    }
+
+    /** Blocks EssentialsX /sell and /sellall while the player carries a Sell Axe, so the axe can't be sold there. */
+    @EventHandler(ignoreCancelled = true)
+    public void onSellCommand(PlayerCommandPreprocessEvent event) {
+        String label = event.getMessage().split(" ")[0].substring(1).toLowerCase(Locale.ROOT);
+        int colon = label.indexOf(':');
+        if (colon >= 0) label = label.substring(colon + 1);
+        if (!label.equals("sell") && !label.equals("sellall")) return;
+        Player player = event.getPlayer();
+        if (!hasSellAxe(player.getInventory())) return;
+        event.setCancelled(true);
+        player.sendMessage(ChatColor.RED + "You can't use /" + label + " while carrying a Sell Axe.");
+    }
+
+    private boolean hasSellAxe(Inventory inv) {
+        for (int i = 0; i < inv.getSize(); i++) {
+            if (isSellAxe(inv.getItem(i))) return true;
+        }
+        return false;
+    }
+
     private void sellInventory(Player player, Inventory inv) {
         double total = 0;
         int count = 0;
