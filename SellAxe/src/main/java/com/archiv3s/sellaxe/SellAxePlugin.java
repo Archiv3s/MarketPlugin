@@ -2,8 +2,11 @@ package com.archiv3s.sellaxe;
 
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.block.Container;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -11,21 +14,26 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.SmallFireball;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.util.Vector;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -33,18 +41,30 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 public final class SellAxePlugin extends JavaPlugin implements Listener, CommandExecutor {
 
     private static final String ESSC_SELL_HOLDER = "net.godlycow.org.essc.modules.shop.sell.SellHolder";
+    private static final long WALL_COOLDOWN_MS = 5000;
+    private static final long BLAST_COOLDOWN_MS = 1500;
+    private static final int WALL_DISTANCE = 6;
+    private static final int WALL_REACH = 5;
+    private static final double WALL_INNER_RADIUS = 3.5;
+    private static final double WALL_OUTER_RADIUS = 4.5;
+    private static final int WALL_HEIGHT = 3;
 
     private final Map<Material, Double> prices = new HashMap<>();
+    private final Map<UUID, Long> wallReady = new HashMap<>();
+    private final Map<UUID, Long> blastReady = new HashMap<>();
     private NamespacedKey axeKey;
+    private NamespacedKey wandKey;
     private Economy economy;
 
     @Override
     public void onEnable() {
         axeKey = new NamespacedKey(this, "sellaxe");
+        wandKey = new NamespacedKey(this, "firewand");
 
         RegisteredServiceProvider<Economy> rsp = getServer().getServicesManager().getRegistration(Economy.class);
         if (rsp != null) {
@@ -142,6 +162,74 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         if (!(event.getDamager() instanceof Player player)) return;
         if (!isSellAxe(player.getInventory().getItemInMainHand())) return;
         event.setCancelled(true);
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onFireWandUse(PlayerInteractEvent event) {
+        if (event.getHand() != EquipmentSlot.HAND) return;
+        Action action = event.getAction();
+        if (action != Action.RIGHT_CLICK_AIR && action != Action.RIGHT_CLICK_BLOCK) return;
+        Player player = event.getPlayer();
+        if (!isFireWand(player.getInventory().getItemInMainHand())) return;
+        event.setCancelled(true);
+        if (!player.hasPermission("sellaxe.use")) {
+            player.sendMessage(ChatColor.RED + "You don't have permission to use this.");
+            return;
+        }
+        if (player.isSneaking()) {
+            fireBlast(player);
+        } else {
+            fireWall(player);
+        }
+    }
+
+    /** Places a hollow ring of fire, 9 blocks across and 3 high, only into air, so existing blocks are never replaced. */
+    private void fireWall(Player player) {
+        if (onCooldown(player, wallReady, WALL_COOLDOWN_MS)) return;
+        Vector facing = player.getLocation().getDirection().setY(0);
+        if (facing.lengthSquared() < 1.0E-6) {
+            player.sendMessage(ChatColor.RED + "Look horizontally to place the fire wall.");
+            return;
+        }
+        facing.normalize();
+        Location center = player.getLocation().add(facing.multiply(WALL_DISTANCE));
+        World world = player.getWorld();
+        int cx = center.getBlockX();
+        int cy = player.getLocation().getBlockY();
+        int cz = center.getBlockZ();
+        int placed = 0;
+        for (int dx = -WALL_REACH; dx <= WALL_REACH; dx++) {
+            for (int dz = -WALL_REACH; dz <= WALL_REACH; dz++) {
+                double distance = Math.sqrt(dx * dx + dz * dz);
+                if (distance < WALL_INNER_RADIUS || distance > WALL_OUTER_RADIUS) continue;
+                for (int dy = 0; dy < WALL_HEIGHT; dy++) {
+                    Block block = world.getBlockAt(cx + dx, cy + dy, cz + dz);
+                    if (block.getType().isAir()) {
+                        block.setType(Material.FIRE);
+                        placed++;
+                    }
+                }
+            }
+        }
+        if (placed == 0) {
+            player.sendMessage(ChatColor.YELLOW + "No open air there for the fire wall.");
+        }
+    }
+
+    private void fireBlast(Player player) {
+        if (onCooldown(player, blastReady, BLAST_COOLDOWN_MS)) return;
+        player.launchProjectile(SmallFireball.class);
+    }
+
+    private boolean onCooldown(Player player, Map<UUID, Long> readyAt, long millis) {
+        long now = System.currentTimeMillis();
+        Long ready = readyAt.get(player.getUniqueId());
+        if (ready != null && now < ready) {
+            player.sendMessage(ChatColor.RED + "Fire ability recharging.");
+            return true;
+        }
+        readyAt.put(player.getUniqueId(), now + millis);
+        return false;
     }
 
     /** Blocks EssentialsC /sell, /sellall, /sellgui and /quicksell while the player carries a Sell Axe. */
@@ -245,10 +333,18 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     }
 
     private boolean isSellAxe(ItemStack item) {
+        return hasFlag(item, axeKey);
+    }
+
+    private boolean isFireWand(ItemStack item) {
+        return hasFlag(item, wandKey);
+    }
+
+    private boolean hasFlag(ItemStack item, NamespacedKey key) {
         if (item == null || !item.hasItemMeta()) {
             return false;
         }
-        return item.getItemMeta().getPersistentDataContainer().has(axeKey, PersistentDataType.BYTE);
+        return item.getItemMeta().getPersistentDataContainer().has(key, PersistentDataType.BYTE);
     }
 
     @Override
@@ -261,12 +357,26 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             player.sendMessage(ChatColor.RED + "You don't have permission to use this.");
             return true;
         }
-        java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(createSellAxe());
-        for (ItemStack item : leftover.values()) {
-            player.getWorld().dropItemNaturally(player.getLocation(), item);
+        if (args.length > 0 && args[0].equalsIgnoreCase("egg")) {
+            giveItem(player, createEmber());
+            player.sendMessage(ChatColor.GOLD + "The axe has been sold a lot of chests, and it remembers every one. Keep the ember.");
+            return true;
         }
+        if (args.length > 0 && args[0].equalsIgnoreCase("fire")) {
+            giveItem(player, createFireWand());
+            player.sendMessage(ChatColor.GREEN + "You received a Fire Wand. Right-click for a fire wall, Shift + right-click for a fire blast.");
+            return true;
+        }
+        giveItem(player, createSellAxe());
         player.sendMessage(ChatColor.GREEN + "You received a Sell Axe.");
         return true;
+    }
+
+    private void giveItem(Player player, ItemStack item) {
+        Map<Integer, ItemStack> leftover = player.getInventory().addItem(item);
+        for (ItemStack extra : leftover.values()) {
+            player.getWorld().dropItemNaturally(player.getLocation(), extra);
+        }
     }
 
     private ItemStack createSellAxe() {
@@ -279,5 +389,26 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         meta.getPersistentDataContainer().set(axeKey, PersistentDataType.BYTE, (byte) 1);
         axe.setItemMeta(meta);
         return axe;
+    }
+
+    private ItemStack createFireWand() {
+        ItemStack wand = new ItemStack(Material.BLAZE_ROD);
+        ItemMeta meta = wand.getItemMeta();
+        meta.setDisplayName(ChatColor.RED + "Fire Wand");
+        meta.setLore(List.of(
+                ChatColor.GRAY + "Right-click: fire wall ahead (9 wide, 3 high)",
+                ChatColor.GRAY + "Shift + right-click: fire blast"));
+        meta.getPersistentDataContainer().set(wandKey, PersistentDataType.BYTE, (byte) 1);
+        wand.setItemMeta(meta);
+        return wand;
+    }
+
+    private ItemStack createEmber() {
+        ItemStack ember = new ItemStack(Material.BLAZE_POWDER);
+        ItemMeta meta = ember.getItemMeta();
+        meta.setDisplayName(ChatColor.GOLD + "Ember");
+        meta.setLore(List.of(ChatColor.DARK_GRAY + "It is still warm."));
+        ember.setItemMeta(meta);
+        return ember;
     }
 }
