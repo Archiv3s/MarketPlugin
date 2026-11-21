@@ -7,6 +7,7 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -52,10 +53,12 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private static final String ESSC_SELL_HOLDER = "net.godlycow.org.essc.modules.shop.sell.SellHolder";
     private static final long WALL_COOLDOWN_MS = 2000;
     private static final long BLAST_COOLDOWN_MS = 2000;
+    private static final long WALL_DURATION_TICKS = 160L;
     private static final int WALL_DISTANCE = 6;
-    private static final int WALL_REACH = 5;
+    private static final int WALL_REACH = 6;
     private static final double WALL_INNER_RADIUS = 3.5;
     private static final double WALL_OUTER_RADIUS = 4.5;
+    private static final double WALL_BACKING_THICKNESS = 1.0;
     private static final int WALL_HEIGHT = 3;
 
     private final Map<Material, Double> prices = new HashMap<>();
@@ -220,7 +223,11 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         }
     }
 
-    /** Places a hollow ring of fire, 9 blocks across and 3 high, only into air, so existing blocks are never replaced. */
+    /**
+     * Places a full 3-high hollow ring of fire, 9 blocks across. Fire needs solid footing, so a temporary
+     * stone backing is placed just outside the ring first. Both the backing and the fire are removed after
+     * WALL_DURATION_TICKS. Only air is ever replaced, and only air that the wall itself filled is cleared.
+     */
     private void fireWall(Player player) {
         if (onCooldown(player, wallReady, WALL_COOLDOWN_MS)) return;
         Vector facing = player.getLocation().getDirection().setY(0);
@@ -234,24 +241,64 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         int cx = center.getBlockX();
         int cy = player.getLocation().getBlockY();
         int cz = center.getBlockZ();
-        int placed = 0;
+
+        // Pass 1: temporary stone just outside the ring, so every flame has a solid face to sit on.
+        List<Block> backing = new ArrayList<>();
+        for (int dx = -WALL_REACH; dx <= WALL_REACH; dx++) {
+            for (int dz = -WALL_REACH; dz <= WALL_REACH; dz++) {
+                double distance = Math.sqrt(dx * dx + dz * dz);
+                if (distance <= WALL_OUTER_RADIUS || distance > WALL_OUTER_RADIUS + WALL_BACKING_THICKNESS) continue;
+                for (int dy = 0; dy < WALL_HEIGHT; dy++) {
+                    Block block = world.getBlockAt(cx + dx, cy + dy, cz + dz);
+                    if (block.getType().isAir()) {
+                        block.setType(Material.STONE, false);
+                        backing.add(block);
+                    }
+                }
+            }
+        }
+
+        // Pass 2: fire in the full 3-high ring, only into air that has solid footing.
+        List<Block> flames = new ArrayList<>();
         for (int dx = -WALL_REACH; dx <= WALL_REACH; dx++) {
             for (int dz = -WALL_REACH; dz <= WALL_REACH; dz++) {
                 double distance = Math.sqrt(dx * dx + dz * dz);
                 if (distance < WALL_INNER_RADIUS || distance > WALL_OUTER_RADIUS) continue;
                 for (int dy = 0; dy < WALL_HEIGHT; dy++) {
                     Block block = world.getBlockAt(cx + dx, cy + dy, cz + dz);
-                    if (block.getType().isAir()) {
-                        block.setType(Material.FIRE);
-                        placed++;
+                    if (block.getType().isAir() && hasSolidFooting(block)) {
+                        block.setType(Material.FIRE, false);
+                        flames.add(block);
                     }
                 }
             }
         }
-        if (placed == 0) {
+
+        if (flames.isEmpty()) {
+            clearWall(backing, flames);
             player.sendMessage(ChatColor.YELLOW + "No open air there for the fire wall.");
+        } else {
+            getServer().getScheduler().runTaskLater(this, () -> clearWall(backing, flames), WALL_DURATION_TICKS);
         }
         startCooldownBar(player, WALL_COOLDOWN_MS);
+    }
+
+    /** True when at least one face the flame could attach to is solid (below, or a side). */
+    private boolean hasSolidFooting(Block block) {
+        for (BlockFace face : new BlockFace[]{BlockFace.DOWN, BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
+            if (block.getRelative(face).getType().isSolid()) return true;
+        }
+        return false;
+    }
+
+    /** Removes the temporary backing and the flames the wall placed. Anything else is left alone. */
+    private void clearWall(List<Block> backing, List<Block> flames) {
+        for (Block block : flames) {
+            if (block.getType() == Material.FIRE) block.setType(Material.AIR, false);
+        }
+        for (Block block : backing) {
+            if (block.getType() == Material.STONE) block.setType(Material.AIR, false);
+        }
     }
 
     private void fireBlast(Player player) {
