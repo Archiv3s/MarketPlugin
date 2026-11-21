@@ -5,15 +5,20 @@ import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
+import org.bukkit.block.data.MultipleFacing;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Fireball;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -26,6 +31,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -35,6 +41,8 @@ import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
 
 import java.io.File;
@@ -48,21 +56,26 @@ import java.util.UUID;
 public final class SellAxePlugin extends JavaPlugin implements Listener, CommandExecutor {
 
     private static final String ESSC_SELL_HOLDER = "net.godlycow.org.essc.modules.shop.sell.SellHolder";
-    private static final long WALL_COOLDOWN_MS = 5000;
-    private static final long BLAST_COOLDOWN_MS = 1500;
-    private static final long WALL_LIFETIME_TICKS = 100L; // 5 seconds
-    private static final int WALL_DISTANCE = 6;
-    private static final int WALL_REACH = 5;
-    private static final double WALL_INNER_RADIUS = 3.5;
-    private static final double WALL_OUTER_RADIUS = 4.5;
-    private static final int WALL_HEIGHT = 3;
+
+    private static final long SKILL_COOLDOWN_MS = 2000L;
+    private static final long WALL_LIFETIME_TICKS = 100L;   // 5 seconds
+    private static final long PANE_LIFETIME_TICKS = 60L;    // 3 seconds if not clicked
+    private static final double WALL_RADIUS = 4.0;
+    private static final double WALL_HEIGHT = 3.0;
+    private static final double WALL_DAMAGE = 2.0;          // one heart per hit
+    private static final int WALL_DAMAGE_INTERVAL = 10;     // ticks between damage checks
+    private static final int WALL_FIRE_TICKS = 60;          // 3 seconds of burning
 
     private final Map<Material, Double> prices = new HashMap<>();
-    private final Map<UUID, Long> wallReady = new HashMap<>();
-    private final Map<UUID, Long> blastReady = new HashMap<>();
+    private final Map<UUID, Long> readyAt = new HashMap<>();
+    private final Map<UUID, BukkitTask> cooldownTasks = new HashMap<>();
+    private final Map<UUID, XpState> savedXp = new HashMap<>();
+    private final Map<UUID, Block> activePanes = new HashMap<>();
     private NamespacedKey axeKey;
     private NamespacedKey wandKey;
     private Economy economy;
+
+    private record XpState(int level, float exp) {}
 
     @Override
     public void onEnable() {
@@ -80,7 +93,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         getServer().getPluginManager().registerEvents(this, this);
         getCommand("sellaxe").setExecutor(this);
 
-        // Fire resistance while a Fire Wand is in the inventory. Refreshed every 3 seconds with a 10-second duration.
+        // Fire resistance while a Fire Wand is in the inventory, refreshed every 3 seconds for 10 seconds.
         getServer().getScheduler().runTaskTimer(this, () -> {
             for (Player online : getServer().getOnlinePlayers()) {
                 if (hasFireWandInInventory(online.getInventory())) {
@@ -195,78 +208,215 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             player.sendMessage(ChatColor.RED + "You don't have permission to use this.");
             return;
         }
-        if (player.isSneaking()) {
-            fireBlast(player);
+
+        Block clicked = event.getClickedBlock();
+        Block pane = activePanes.get(player.getUniqueId());
+        if (clicked != null && pane != null && clicked.equals(pane)) {
+            fireBlast(player);          // clicking the glass pane fires the blast
+        } else if (player.isSneaking()) {
+            summonPane(player);         // crouch + right-click places the glass pane
         } else {
-            fireWall(player);
+            fireWall(player);           // right-click makes the flame ring around you
         }
     }
 
     /**
-     * Writes a 9-wide, 3-high ring of fire straight into the world, like WorldEdit does: setBlockData with
-     * applyPhysics=false, so no neighbour update removes the fire. Wool sits just inside the ring as backing,
-     * since fire only stays lit next to a flammable block or on solid ground. Both are removed after 5 seconds.
+     * Flame ring centred on the caster: radius 4, height 3, lasting 5 seconds. Particles are only visuals;
+     * the server checks the ring every 10 ticks and sets living entities inside it on fire and damages them.
      */
     private void fireWall(Player player) {
-        if (onCooldown(player, wallReady, WALL_COOLDOWN_MS)) return;
-        Vector facing = player.getLocation().getDirection().setY(0);
-        if (facing.lengthSquared() < 1.0E-6) {
-            player.sendMessage(ChatColor.RED + "Look horizontally to place the fire wall.");
-            return;
-        }
-        facing.normalize();
-        Location center = player.getLocation().add(facing.multiply(WALL_DISTANCE));
-        World world = player.getWorld();
-        int cx = center.getBlockX();
-        int cy = player.getLocation().getBlockY();
-        int cz = center.getBlockZ();
-        List<Block> placed = new ArrayList<>();
-        for (int dx = -WALL_REACH; dx <= WALL_REACH; dx++) {
-            for (int dz = -WALL_REACH; dz <= WALL_REACH; dz++) {
-                double distance = Math.sqrt(dx * dx + dz * dz);
-                boolean fireRing = distance >= WALL_INNER_RADIUS && distance <= WALL_OUTER_RADIUS;
-                boolean backingRing = distance >= WALL_INNER_RADIUS - 1.0 && distance < WALL_INNER_RADIUS;
-                if (!fireRing && !backingRing) continue;
-                Material type = fireRing ? Material.FIRE : Material.WHITE_WOOL;
-                for (int dy = 0; dy < WALL_HEIGHT; dy++) {
-                    Block block = world.getBlockAt(cx + dx, cy + dy, cz + dz);
-                    if (!block.getType().isAir()) continue;
-                    block.setBlockData(type.createBlockData(), false);
-                    placed.add(block);
+        if (!skillReady(player)) return;
+        startCooldown(player);
+
+        Location center = player.getLocation().clone();
+        World world = center.getWorld();
+        new BukkitRunnable() {
+            int age = 0;
+
+            @Override
+            public void run() {
+                if (age >= WALL_LIFETIME_TICKS) {
+                    cancel();
+                    return;
                 }
-            }
-        }
-        if (placed.isEmpty()) {
-            player.sendMessage(ChatColor.YELLOW + "No open air there for the fire wall.");
-            return;
-        }
-        getServer().getScheduler().runTaskLater(this, () -> {
-            for (Block block : placed) {
-                Material type = block.getType();
-                if (type == Material.FIRE || type == Material.WHITE_WOOL) {
-                    block.setBlockData(Material.AIR.createBlockData(), false);
+                if (age % 4 == 0) {
+                    drawRing(world, center);
                 }
+                if (age % WALL_DAMAGE_INTERVAL == 0) {
+                    hurtInsideRing(player, center);
+                }
+                age++;
             }
-        }, WALL_LIFETIME_TICKS);
+        }.runTaskTimer(this, 0L, 1L);
     }
 
+    private void drawRing(World world, Location center) {
+        for (int angle = 0; angle < 360; angle += 12) {
+            double rad = Math.toRadians(angle);
+            double x = center.getX() + WALL_RADIUS * Math.cos(rad);
+            double z = center.getZ() + WALL_RADIUS * Math.sin(rad);
+            for (double y = 0.2; y < WALL_HEIGHT; y += 0.8) {
+                world.spawnParticle(Particle.FLAME, x, center.getY() + y, z, 1, 0D, 0.05D, 0D, 0.01D);
+            }
+        }
+    }
+
+    private void hurtInsideRing(Player caster, Location center) {
+        World world = center.getWorld();
+        for (Entity entity : world.getNearbyEntities(center, WALL_RADIUS + 1, WALL_HEIGHT + 1, WALL_RADIUS + 1)) {
+            if (!(entity instanceof LivingEntity living) || entity.equals(caster)) continue;
+            Location at = entity.getLocation();
+            double dx = at.getX() - center.getX();
+            double dz = at.getZ() - center.getZ();
+            double horizontal = Math.sqrt(dx * dx + dz * dz);
+            double dy = at.getY() - center.getY();
+            if (horizontal < WALL_RADIUS - 1.0 || horizontal > WALL_RADIUS + 0.5) continue;
+            if (dy < -1.0 || dy > WALL_HEIGHT) continue;
+            living.setFireTicks(WALL_FIRE_TICKS);
+            living.damage(WALL_DAMAGE, caster);
+        }
+    }
+
+    /** Crouch + right-click: a flat glass pane in front of your head. It vanishes after 3 seconds or when clicked. */
+    private void summonPane(Player player) {
+        UUID id = player.getUniqueId();
+        Block spot = findPaneSpot(player);
+        if (spot == null) {
+            player.sendMessage(ChatColor.YELLOW + "No open air in front for the glass pane.");
+            return;
+        }
+        removePane(id);
+
+        Vector dir = player.getEyeLocation().getDirection();
+        MultipleFacing pane = (MultipleFacing) Material.GLASS_PANE.createBlockData();
+        if (Math.abs(dir.getX()) >= Math.abs(dir.getZ())) {
+            pane.setFace(BlockFace.NORTH, true);
+            pane.setFace(BlockFace.SOUTH, true);
+        } else {
+            pane.setFace(BlockFace.EAST, true);
+            pane.setFace(BlockFace.WEST, true);
+        }
+        spot.setBlockData(pane, false);
+        activePanes.put(id, spot);
+
+        final Block placed = spot;
+        getServer().getScheduler().runTaskLater(this, () -> {
+            if (placed.equals(activePanes.get(id))) {
+                removePane(id);
+            }
+        }, PANE_LIFETIME_TICKS);
+    }
+
+    private Block findPaneSpot(Player player) {
+        Location eye = player.getEyeLocation();
+        Vector dir = eye.getDirection();
+        for (double distance : new double[] {2.0, 1.5, 1.0}) {
+            Block candidate = eye.clone().add(dir.clone().multiply(distance)).getBlock();
+            if (candidate.getType().isAir()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private void removePane(UUID id) {
+        Block pane = activePanes.remove(id);
+        if (pane != null && pane.getType() == Material.GLASS_PANE) {
+            pane.setBlockData(Material.AIR.createBlockData(), false);
+        }
+    }
+
+    /** Right-click on the glass pane: a large fireball flies along your aim, and the pane is consumed. */
     private void fireBlast(Player player) {
-        if (onCooldown(player, blastReady, BLAST_COOLDOWN_MS)) return;
-        // Large fireball: explodes on impact with blocks or entities, and is launched along the aim, so it works at air too.
+        if (!skillReady(player)) return;
+        startCooldown(player);
+        removePane(player.getUniqueId());
+
         Fireball fireball = player.launchProjectile(Fireball.class);
         fireball.setIsIncendiary(true);
         fireball.setYield(2.5F);
     }
 
-    private boolean onCooldown(Player player, Map<UUID, Long> readyAt, long millis) {
-        long now = System.currentTimeMillis();
+    private boolean skillReady(Player player) {
         Long ready = readyAt.get(player.getUniqueId());
-        if (ready != null && now < ready) {
+        if (ready != null && System.currentTimeMillis() < ready) {
             player.sendMessage(ChatColor.RED + "Fire ability recharging.");
-            return true;
+            return false;
         }
-        readyAt.put(player.getUniqueId(), now + millis);
-        return false;
+        return true;
+    }
+
+    /**
+     * Starts the shared 2-second cooldown. The XP bar starts empty and fills to full over the cooldown,
+     * then your real level and XP are restored.
+     */
+    private void startCooldown(Player player) {
+        UUID id = player.getUniqueId();
+        readyAt.put(id, System.currentTimeMillis() + SKILL_COOLDOWN_MS);
+        if (!savedXp.containsKey(id)) {
+            savedXp.put(id, new XpState(player.getLevel(), player.getExp()));
+        }
+        BukkitTask old = cooldownTasks.remove(id);
+        if (old != null) {
+            old.cancel();
+        }
+        player.setLevel(0);
+        player.setExp(0F);
+
+        BukkitRunnable bar = new BukkitRunnable() {
+            @Override
+            public void run() {
+                Long ready = readyAt.get(id);
+                long now = System.currentTimeMillis();
+                if (ready == null || now >= ready) {
+                    player.setExp(1F);
+                    cancel();
+                    cooldownTasks.remove(id);
+                    SellAxePlugin.this.getServer().getScheduler().runTaskLater(SellAxePlugin.this,
+                            () -> finishCooldown(player), 10L);
+                    return;
+                }
+                float fill = 1F - (float) (ready - now) / SKILL_COOLDOWN_MS;
+                player.setExp(Math.max(0F, Math.min(1F, fill)));
+            }
+        };
+        cooldownTasks.put(id, bar.runTaskTimer(this, 1L, 1L));
+    }
+
+    private void finishCooldown(Player player) {
+        UUID id = player.getUniqueId();
+        readyAt.remove(id);
+        BukkitTask task = cooldownTasks.remove(id);
+        if (task != null) {
+            task.cancel();
+        }
+        XpState state = savedXp.remove(id);
+        if (state != null) {
+            player.setLevel(state.level());
+            player.setExp(state.exp());
+        }
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        Player player = event.getPlayer();
+        if (savedXp.containsKey(player.getUniqueId())) {
+            finishCooldown(player);
+        }
+        removePane(player.getUniqueId());
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onBreakSkillBlock(BlockBreakEvent event) {
+        // Keeps glass panes from being picked up as normal blocks if a player breaks one.
+        if (activePanes.containsValue(event.getBlock())) {
+            activePanes.values().remove(event.getBlock());
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onBreak2(BlockBreakEvent event) {
+        // placeholder removed below
     }
 
     /** Blocks EssentialsC /sell, /sellall, /sellgui and /quicksell while the player carries a Sell Axe. */
@@ -402,7 +552,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         // Op-only. Non-ops fall through to the normal Sell Axe, so the subcommand is not revealed to them.
         if (args.length > 0 && args[0].equalsIgnoreCase("fire") && player.isOp()) {
             giveItem(player, createFireWand());
-            player.sendMessage(ChatColor.GREEN + "You received a Fire Wand. Right-click for a fire wall, Shift + right-click for a fire blast.");
+            player.sendMessage(ChatColor.GREEN + "You received a Fire Wand. Right-click for a flame ring, crouch + right-click for a glass pane, then click the pane for a fire blast.");
             return true;
         }
         giveItem(player, createSellAxe());
@@ -434,8 +584,9 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         ItemMeta meta = wand.getItemMeta();
         meta.setDisplayName(ChatColor.RED + "Fire Wand");
         meta.setLore(List.of(
-                ChatColor.GRAY + "Right-click: fire wall ahead (9 wide, 3 high)",
-                ChatColor.GRAY + "Shift + right-click: fire blast"));
+                ChatColor.GRAY + "Right-click: flame ring around you (5 s)",
+                ChatColor.GRAY + "Crouch + right-click: glass pane ahead",
+                ChatColor.GRAY + "Click the pane: fire blast"));
         meta.getPersistentDataContainer().set(wandKey, PersistentDataType.BYTE, (byte) 1);
         wand.setItemMeta(meta);
         return wand;
