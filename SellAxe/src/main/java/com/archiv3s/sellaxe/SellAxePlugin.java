@@ -12,9 +12,11 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
@@ -33,6 +35,8 @@ import java.util.Locale;
 import java.util.Map;
 
 public final class SellAxePlugin extends JavaPlugin implements Listener, CommandExecutor {
+
+    private static final String ESSC_SELL_HOLDER = "net.godlycow.org.essc.modules.shop.sell.SellHolder";
 
     private final Map<Material, Double> prices = new HashMap<>();
     private NamespacedKey axeKey;
@@ -140,7 +144,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         event.setCancelled(true);
     }
 
-    /** Blocks /sell, /sellall, /sellgui and /quicksell (with or without a plugin prefix) while the player carries a Sell Axe. */
+    /** Blocks EssentialsC /sell, /sellall, /sellgui and /quicksell while the player carries a Sell Axe. */
     @EventHandler(ignoreCancelled = true)
     public void onSellCommand(PlayerCommandPreprocessEvent event) {
         String label = event.getMessage().split(" ")[0].substring(1).toLowerCase(Locale.ROOT);
@@ -153,35 +157,48 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         player.sendMessage(ChatColor.RED + "You can't use /" + label + " while carrying a Sell Axe.");
     }
 
-    /** Stops a Sell Axe from being put into EssentialsC's sell GUI, where confirming would sell it. */
-    @EventHandler(ignoreCancelled = true)
+    /** Blocks moving a Sell Axe into EssentialsC's sell GUI by click, shift-click, hotbar swap or drag. */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onSellGuiClick(InventoryClickEvent event) {
-        if (!isSellGui(event.getView().getTopInventory())) return;
         if (!(event.getWhoClicked() instanceof Player player)) return;
-        ItemStack hotbarItem = event.getHotbarButton() >= 0
-                ? player.getInventory().getItem(event.getHotbarButton())
-                : null;
-        if (isSellAxe(event.getCurrentItem()) || isSellAxe(event.getCursor()) || isSellAxe(hotbarItem)) {
+        Inventory top = event.getView().getTopInventory();
+        if (!isEssentialsSellGui(top)) return;
+
+        boolean clickedTop = event.getRawSlot() >= 0 && event.getRawSlot() < top.getSize();
+        boolean blocked = false;
+        if (clickedTop && isSellAxe(event.getCursor())) {
+            blocked = true;
+        } else if (!clickedTop && event.isShiftClick() && isSellAxe(event.getCurrentItem())) {
+            blocked = true;
+        } else if (clickedTop && event.getClick() == ClickType.NUMBER_KEY && event.getHotbarButton() >= 0
+                && isSellAxe(player.getInventory().getItem(event.getHotbarButton()))) {
+            blocked = true;
+        }
+
+        if (blocked) {
             event.setCancelled(true);
-            player.sendMessage(ChatColor.RED + "You can't sell a Sell Axe.");
+            player.sendMessage(ChatColor.RED + "You can't sell a Sell Axe in the sell GUI.");
         }
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onSellGuiDrag(InventoryDragEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
         Inventory top = event.getView().getTopInventory();
-        if (!isSellGui(top) || !isSellAxe(event.getOldCursor())) return;
+        if (!isEssentialsSellGui(top)) return;
+        if (!isSellAxe(event.getOldCursor())) return;
+
         for (int slot : event.getRawSlots()) {
-            if (slot < top.getSize()) {
+            if (slot >= 0 && slot < top.getSize()) {
                 event.setCancelled(true);
+                player.sendMessage(ChatColor.RED + "You can't sell a Sell Axe in the sell GUI.");
                 return;
             }
         }
     }
 
-    /** EssentialsC's sell GUI uses its own holder class, so match it by name to avoid a compile-time dependency. */
-    private boolean isSellGui(Inventory inv) {
-        return inv.getHolder() != null && inv.getHolder().getClass().getSimpleName().equals("SellHolder");
+    private boolean isEssentialsSellGui(Inventory inv) {
+        return inv.getHolder() != null && inv.getHolder().getClass().getName().equals(ESSC_SELL_HOLDER);
     }
 
     private boolean hasSellAxe(Inventory inv) {
@@ -244,7 +261,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             player.sendMessage(ChatColor.RED + "You don't have permission to use this.");
             return true;
         }
-        Map<Integer, ItemStack> leftover = player.getInventory().addItem(createSellAxe());
+        java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(createSellAxe());
         for (ItemStack item : leftover.values()) {
             player.getWorld().dropItemNaturally(player.getLocation(), item);
         }
