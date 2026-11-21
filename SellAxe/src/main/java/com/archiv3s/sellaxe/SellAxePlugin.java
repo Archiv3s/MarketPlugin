@@ -138,13 +138,13 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         event.setCancelled(true);
     }
 
-    /** Blocks EssentialsX /sell and /sellall while the player carries a Sell Axe, so the axe can't be sold there. */
+    /** Blocks EssentialsX /sell, /sellall and EssentialsC /sellgui while the player carries a Sell Axe, so the axe can't be sold there. */
     @EventHandler(ignoreCancelled = true)
     public void onSellCommand(PlayerCommandPreprocessEvent event) {
         String label = event.getMessage().split(" ")[0].substring(1).toLowerCase(Locale.ROOT);
         int colon = label.indexOf(':');
         if (colon >= 0) label = label.substring(colon + 1);
-        if (!label.equals("sell") && !label.equals("sellall")) return;
+        if (!label.equals("sell") && !label.equals("sellall") && !label.equals("sellgui")) return;
         Player player = event.getPlayer();
         if (!hasSellAxe(player.getInventory())) return;
         event.setCancelled(true);
