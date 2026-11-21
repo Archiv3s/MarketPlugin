@@ -73,6 +73,10 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private static final long PVP_WINDOW_MS = 20_000L;      // a player hit by or hitting a player stays in PvP this long
     private static final double PRESENCE_CAP_SECONDS = 120.0;
 
+    private static final int CRACK_LINES_PER_USE = 6;       // each wand use adds this many branches
+    private static final int CRACK_MAX_LINES = 60;          // 10 uses; the oldest branches drop off after that
+    private static final long CRACK_REDRAW_TICKS = 60L;     // persistent cracks are redrawn every 3 seconds
+
     private final Map<Material, Double> prices = new HashMap<>();
     private final Map<UUID, Long> readyAt = new HashMap<>();
     private final Map<UUID, BukkitTask> cooldownTasks = new HashMap<>();
@@ -80,11 +84,22 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private final Map<UUID, Block> activePanes = new HashMap<>();
     private final Map<UUID, Long> combatUntil = new HashMap<>();
     private final Map<UUID, Double> fightSeconds = new HashMap<>();
+    private final Map<UUID, CrackField> crackFields = new HashMap<>();
     private NamespacedKey axeKey;
     private NamespacedKey wandKey;
     private Economy economy;
 
     private record XpState(int level, float exp) {}
+
+    /** A player's persistent cracks: one polyline of floor points per branch. */
+    private static final class CrackField {
+        World world;
+        final List<List<double[]>> lines = new ArrayList<>();
+
+        CrackField(World world) {
+            this.world = world;
+        }
+    }
 
     @Override
     public void onEnable() {
@@ -112,6 +127,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         }, 20L, 60L);
 
         startArenaPresence();
+        startCrackRedraw();
     }
 
     private boolean hasFireWandInInventory(Inventory inv) {
@@ -306,32 +322,65 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     }
 
     /**
-     * Red crack lines radiating from the caster's feet out to radius 37, drawn on the floor surface.
-     * Drawn once per wand use; no blocks are changed.
+     * Each wand use adds CRACK_LINES_PER_USE new red branches from the caster's feet out to radius 37, on the
+     * floor surface. Branches accumulate in the player's crack field, so the cracks grow with every use, and the
+     * field is redrawn every 3 seconds. The oldest branches drop off after CRACK_MAX_LINES. No blocks are changed.
      */
     private void drawCracks(Player player) {
         World world = player.getWorld();
         Location origin = player.getLocation();
         int floorY = world.getHighestBlockYAt(origin.getBlockX(), origin.getBlockZ());
         double y = floorY + 1.02;
-        Particle.DustOptions red = new Particle.DustOptions(Color.fromRGB(200, 20, 0), 1.0F);
+        CrackField field = crackFields.computeIfAbsent(player.getUniqueId(), id -> new CrackField(world));
+        if (field.world != world) {
+            field.world = world;
+            field.lines.clear();
+        }
         ThreadLocalRandom rnd = ThreadLocalRandom.current();
 
-        for (int line = 0; line < 6; line++) {          // 6 lines: half density for mobile
-            double angle = line * (Math.PI * 2 / 6) + rnd.nextDouble(-0.2, 0.2);
+        for (int line = 0; line < CRACK_LINES_PER_USE; line++) {
+            // Each new branch starts in its own slice of the circle, so repeated uses fill the gaps.
+            double angle = (line + rnd.nextDouble()) * (Math.PI * 2 / CRACK_LINES_PER_USE);
             double dirX = Math.cos(angle);
             double dirZ = Math.sin(angle);
             double x = origin.getX();
             double z = origin.getZ();
             double travelled = 0;
+            List<double[]> points = new ArrayList<>();
+            points.add(new double[] {x, y, z});
             while (travelled < ARENA_RADIUS) {
                 double step = 1.0 + rnd.nextDouble(1.5);
                 x += dirX * step + rnd.nextDouble(-0.4, 0.4);
                 z += dirZ * step + rnd.nextDouble(-0.4, 0.4);
                 travelled += step;
-                world.spawnParticle(Particle.DUST, x, y, z, 2, 0.1, 0.0, 0.1, 0.0, red);
+                points.add(new double[] {x, y, z});
+            }
+            field.lines.add(points);
+        }
+        while (field.lines.size() > CRACK_MAX_LINES) {
+            field.lines.remove(0);
+        }
+        drawCrackField(field);
+    }
+
+    private void drawCrackField(CrackField field) {
+        Particle.DustOptions red = new Particle.DustOptions(Color.fromRGB(200, 20, 0), 1.0F);
+        for (List<double[]> line : field.lines) {
+            for (double[] p : line) {
+                field.world.spawnParticle(Particle.DUST, p[0], p[1], p[2], 1, 0.05, 0.0, 0.05, 0.0, red);
             }
         }
+    }
+
+    /** Keeps every player's cracks visible between uses. Cracks stay where they were drawn, and are removed when the player logs out. */
+    private void startCrackRedraw() {
+        getServer().getScheduler().runTaskTimer(this, () -> {
+            for (Map.Entry<UUID, CrackField> entry : crackFields.entrySet()) {
+                Player owner = getServer().getPlayer(entry.getKey());
+                if (owner == null || owner.getWorld() != entry.getValue().world) continue;
+                drawCrackField(entry.getValue());
+            }
+        }, CRACK_REDRAW_TICKS, CRACK_REDRAW_TICKS);
     }
 
     /**
@@ -433,6 +482,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private void fireBlast(Player player) {
         if (!skillReady(player)) return;
         startCooldown(player);
+        drawCracks(player);
         removePane(player.getUniqueId());
 
         Fireball fireball = player.launchProjectile(Fireball.class);
@@ -510,6 +560,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         removePane(id);
         combatUntil.remove(id);
         fightSeconds.remove(id);
+        crackFields.remove(id);
     }
 
     @EventHandler(ignoreCancelled = true)
