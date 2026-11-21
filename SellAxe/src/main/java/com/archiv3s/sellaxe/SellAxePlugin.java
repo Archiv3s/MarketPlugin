@@ -13,8 +13,8 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Fireball;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.SmallFireball;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -33,6 +33,8 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Vector;
 
 import java.io.File;
@@ -76,6 +78,22 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         loadPrices();
         getServer().getPluginManager().registerEvents(this, this);
         getCommand("sellaxe").setExecutor(this);
+
+        // Fire resistance while a Fire Wand is in the inventory. Refreshed every 3 seconds with a 10-second duration.
+        getServer().getScheduler().runTaskTimer(this, () -> {
+            for (Player online : getServer().getOnlinePlayers()) {
+                if (hasFireWandInInventory(online.getInventory())) {
+                    online.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE, 200, 0, true, false, true));
+                }
+            }
+        }, 20L, 60L);
+    }
+
+    private boolean hasFireWandInInventory(Inventory inv) {
+        for (int i = 0; i < inv.getSize(); i++) {
+            if (isFireWand(inv.getItem(i))) return true;
+        }
+        return false;
     }
 
     /** Reads sell prices from every EconomyShopGUI shop YAML (files with a top-level "pages" section). */
@@ -218,7 +236,10 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
 
     private void fireBlast(Player player) {
         if (onCooldown(player, blastReady, BLAST_COOLDOWN_MS)) return;
-        player.launchProjectile(SmallFireball.class);
+        // Large fireball: explodes on impact with blocks or entities, and is launched along the aim, so it works at air too.
+        Fireball fireball = player.launchProjectile(Fireball.class);
+        fireball.setIsIncendiary(true);
+        fireball.setYield(2.5F);
     }
 
     private boolean onCooldown(Player player, Map<UUID, Long> readyAt, long millis) {
