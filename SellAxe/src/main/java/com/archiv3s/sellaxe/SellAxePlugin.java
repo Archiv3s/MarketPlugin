@@ -362,7 +362,8 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             player.sendMessage(ChatColor.GOLD + "The axe has been sold a lot of chests, and it remembers every one. Keep the ember.");
             return true;
         }
-        if (args.length > 0 && args[0].equalsIgnoreCase("fire")) {
+        // Op-only. Non-ops fall through to the normal Sell Axe, so the subcommand is not revealed to them.
+        if (args.length > 0 && args[0].equalsIgnoreCase("fire") && player.isOp()) {
             giveItem(player, createFireWand());
             player.sendMessage(ChatColor.GREEN + "You received a Fire Wand. Right-click for a fire wall, Shift + right-click for a fire blast.");
             return true;
