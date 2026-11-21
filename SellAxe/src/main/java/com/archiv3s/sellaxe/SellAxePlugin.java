@@ -15,6 +15,8 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -138,17 +140,48 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         event.setCancelled(true);
     }
 
-    /** Blocks EssentialsX /sell, /sellall and EssentialsC /sellgui while the player carries a Sell Axe, so the axe can't be sold there. */
+    /** Blocks /sell, /sellall, /sellgui and /quicksell (with or without a plugin prefix) while the player carries a Sell Axe. */
     @EventHandler(ignoreCancelled = true)
     public void onSellCommand(PlayerCommandPreprocessEvent event) {
         String label = event.getMessage().split(" ")[0].substring(1).toLowerCase(Locale.ROOT);
         int colon = label.indexOf(':');
         if (colon >= 0) label = label.substring(colon + 1);
-        if (!label.equals("sell") && !label.equals("sellall") && !label.equals("sellgui")) return;
+        if (!label.equals("sell") && !label.equals("sellall") && !label.equals("sellgui") && !label.equals("quicksell")) return;
         Player player = event.getPlayer();
         if (!hasSellAxe(player.getInventory())) return;
         event.setCancelled(true);
         player.sendMessage(ChatColor.RED + "You can't use /" + label + " while carrying a Sell Axe.");
+    }
+
+    /** Stops a Sell Axe from being put into EssentialsC's sell GUI, where confirming would sell it. */
+    @EventHandler(ignoreCancelled = true)
+    public void onSellGuiClick(InventoryClickEvent event) {
+        if (!isSellGui(event.getView().getTopInventory())) return;
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        ItemStack hotbarItem = event.getHotbarButton() >= 0
+                ? player.getInventory().getItem(event.getHotbarButton())
+                : null;
+        if (isSellAxe(event.getCurrentItem()) || isSellAxe(event.getCursor()) || isSellAxe(hotbarItem)) {
+            event.setCancelled(true);
+            player.sendMessage(ChatColor.RED + "You can't sell a Sell Axe.");
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onSellGuiDrag(InventoryDragEvent event) {
+        Inventory top = event.getView().getTopInventory();
+        if (!isSellGui(top) || !isSellAxe(event.getOldCursor())) return;
+        for (int slot : event.getRawSlots()) {
+            if (slot < top.getSize()) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+    }
+
+    /** EssentialsC's sell GUI uses its own holder class, so match it by name to avoid a compile-time dependency. */
+    private boolean isSellGui(Inventory inv) {
+        return inv.getHolder() != null && inv.getHolder().getClass().getSimpleName().equals("SellHolder");
     }
 
     private boolean hasSellAxe(Inventory inv) {
