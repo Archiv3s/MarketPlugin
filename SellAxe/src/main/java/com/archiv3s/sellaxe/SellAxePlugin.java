@@ -2,6 +2,7 @@ package com.archiv3s.sellaxe;
 
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.ChatColor;
+import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -20,6 +21,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Fireball;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -52,6 +54,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class SellAxePlugin extends JavaPlugin implements Listener, CommandExecutor {
 
@@ -66,11 +69,17 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private static final int WALL_DAMAGE_INTERVAL = 10;     // ticks between damage checks
     private static final int WALL_FIRE_TICKS = 60;          // 3 seconds of burning
 
+    private static final double ARENA_RADIUS = 37.0;        // fire presence and crack radius
+    private static final long PVP_WINDOW_MS = 20_000L;      // a player hit by or hitting a player stays in PvP this long
+    private static final double PRESENCE_CAP_SECONDS = 120.0;
+
     private final Map<Material, Double> prices = new HashMap<>();
     private final Map<UUID, Long> readyAt = new HashMap<>();
     private final Map<UUID, BukkitTask> cooldownTasks = new HashMap<>();
     private final Map<UUID, XpState> savedXp = new HashMap<>();
     private final Map<UUID, Block> activePanes = new HashMap<>();
+    private final Map<UUID, Long> combatUntil = new HashMap<>();
+    private final Map<UUID, Double> fightSeconds = new HashMap<>();
     private NamespacedKey axeKey;
     private NamespacedKey wandKey;
     private Economy economy;
@@ -101,6 +110,8 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
                 }
             }
         }, 20L, 60L);
+
+        startArenaPresence();
     }
 
     private boolean hasFireWandInInventory(Inventory inv) {
@@ -196,6 +207,22 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         event.setCancelled(true);
     }
 
+    /** Any player-vs-player hit (melee or fireball) puts both players into PvP for a short window. */
+    @EventHandler(ignoreCancelled = true)
+    public void onPvpHit(EntityDamageByEntityEvent event) {
+        if (!(event.getEntity() instanceof Player victim)) return;
+        Player attacker = null;
+        if (event.getDamager() instanceof Player direct) {
+            attacker = direct;
+        } else if (event.getDamager() instanceof Projectile projectile && projectile.getShooter() instanceof Player shooter) {
+            attacker = shooter;
+        }
+        if (attacker == null || attacker.equals(victim)) return;
+        long until = System.currentTimeMillis() + PVP_WINDOW_MS;
+        combatUntil.put(victim.getUniqueId(), until);
+        combatUntil.put(attacker.getUniqueId(), until);
+    }
+
     @EventHandler(ignoreCancelled = true)
     public void onFireWandUse(PlayerInteractEvent event) {
         if (event.getHand() != EquipmentSlot.HAND) return;
@@ -227,6 +254,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private void fireWall(Player player) {
         if (!skillReady(player)) return;
         startCooldown(player);
+        drawCracks(player);
 
         Location center = player.getLocation().clone();
         World world = center.getWorld();
@@ -274,6 +302,81 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             if (dy < -1.0 || dy > WALL_HEIGHT) continue;
             living.setFireTicks(WALL_FIRE_TICKS);
             living.damage(WALL_DAMAGE, caster);
+        }
+    }
+
+    /**
+     * Red crack lines radiating from the caster's feet out to radius 37, drawn on the floor surface.
+     * Drawn once per wand use; no blocks are changed.
+     */
+    private void drawCracks(Player player) {
+        World world = player.getWorld();
+        Location origin = player.getLocation();
+        int floorY = world.getHighestBlockYAt(origin.getBlockX(), origin.getBlockZ());
+        double y = floorY + 1.02;
+        Particle.DustOptions red = new Particle.DustOptions(Color.fromRGB(200, 20, 0), 1.0F);
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+
+        for (int line = 0; line < 6; line++) {          // 6 lines: half density for mobile
+            double angle = line * (Math.PI * 2 / 6) + rnd.nextDouble(-0.2, 0.2);
+            double dirX = Math.cos(angle);
+            double dirZ = Math.sin(angle);
+            double x = origin.getX();
+            double z = origin.getZ();
+            double travelled = 0;
+            while (travelled < ARENA_RADIUS) {
+                double step = 1.0 + rnd.nextDouble(1.5);
+                x += dirX * step + rnd.nextDouble(-0.4, 0.4);
+                z += dirZ * step + rnd.nextDouble(-0.4, 0.4);
+                travelled += step;
+                world.spawnParticle(Particle.DUST, x, y, z, 2, 0.1, 0.0, 0.1, 0.0, red);
+            }
+        }
+    }
+
+    /**
+     * Fire presence across the 37-block arena while the holder is in PvP. Density grows with fight time.
+     * Runs every 10 ticks at about half the original particle count for mobile.
+     */
+    private void startArenaPresence() {
+        getServer().getScheduler().runTaskTimer(this, () -> {
+            long now = System.currentTimeMillis();
+            for (Player player : getServer().getOnlinePlayers()) {
+                UUID id = player.getUniqueId();
+                if (!hasFireWandInInventory(player.getInventory()) || combatUntil.getOrDefault(id, 0L) <= now) {
+                    fightSeconds.remove(id);
+                    continue;
+                }
+                double seconds = Math.min(PRESENCE_CAP_SECONDS, fightSeconds.getOrDefault(id, 0.0) + 0.5);
+                fightSeconds.put(id, seconds);
+                spawnPresence(player, Math.min(1.0, seconds / 90.0));
+            }
+        }, 20L, 10L);
+    }
+
+    private void spawnPresence(Player player, double intensity) {
+        World world = player.getWorld();
+        Location center = player.getLocation();
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+
+        int flames = 4 + (int) Math.round(14 * intensity);
+        for (int i = 0; i < flames; i++) {
+            double angle = rnd.nextDouble(Math.PI * 2);
+            double r = ARENA_RADIUS * Math.sqrt(rnd.nextDouble());
+            double x = center.getX() + r * Math.cos(angle);
+            double z = center.getZ() + r * Math.sin(angle);
+            int floorY = world.getHighestBlockYAt((int) Math.floor(x), (int) Math.floor(z));
+            Particle type = rnd.nextDouble() < 0.7 ? Particle.SMALL_FLAME : Particle.FLAME;
+            world.spawnParticle(type, x, floorY + 1.05, z, 1, 0.2, 0.05, 0.2, 0.01);
+        }
+
+        if (rnd.nextDouble() < intensity * 0.4) {       // lava sparks join once the fight is well under way
+            double angle = rnd.nextDouble(Math.PI * 2);
+            double r = ARENA_RADIUS * Math.sqrt(rnd.nextDouble());
+            double x = center.getX() + r * Math.cos(angle);
+            double z = center.getZ() + r * Math.sin(angle);
+            int floorY = world.getHighestBlockYAt((int) Math.floor(x), (int) Math.floor(z));
+            world.spawnParticle(Particle.LAVA, x, floorY + 1.05, z, 1);
         }
     }
 
@@ -400,23 +503,19 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
-        if (savedXp.containsKey(player.getUniqueId())) {
+        UUID id = player.getUniqueId();
+        if (savedXp.containsKey(id)) {
             finishCooldown(player);
         }
-        removePane(player.getUniqueId());
+        removePane(id);
+        combatUntil.remove(id);
+        fightSeconds.remove(id);
     }
 
     @EventHandler(ignoreCancelled = true)
     public void onBreakSkillBlock(BlockBreakEvent event) {
-        // Keeps glass panes from being picked up as normal blocks if a player breaks one.
-        if (activePanes.containsValue(event.getBlock())) {
-            activePanes.values().remove(event.getBlock());
-        }
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onBreak2(BlockBreakEvent event) {
-        // placeholder removed below
+        // Keeps a glass pane from being treated as a normal block if a player breaks it.
+        activePanes.values().removeIf(pane -> pane.equals(event.getBlock()));
     }
 
     /** Blocks EssentialsC /sell, /sellall, /sellgui and /quicksell while the player carries a Sell Axe. */
@@ -586,7 +685,8 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         meta.setLore(List.of(
                 ChatColor.GRAY + "Right-click: flame ring around you (5 s)",
                 ChatColor.GRAY + "Crouch + right-click: glass pane ahead",
-                ChatColor.GRAY + "Click the pane: fire blast"));
+                ChatColor.GRAY + "Click the pane: fire blast",
+                ChatColor.GRAY + "In PvP: fire presence grows across the arena"));
         meta.getPersistentDataContainer().set(wandKey, PersistentDataType.BYTE, (byte) 1);
         wand.setItemMeta(meta);
         return wand;
