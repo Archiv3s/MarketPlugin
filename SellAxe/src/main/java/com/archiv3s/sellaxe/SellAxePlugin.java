@@ -26,6 +26,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -40,6 +41,7 @@ import org.bukkit.util.Vector;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -48,8 +50,8 @@ import java.util.UUID;
 public final class SellAxePlugin extends JavaPlugin implements Listener, CommandExecutor {
 
     private static final String ESSC_SELL_HOLDER = "net.godlycow.org.essc.modules.shop.sell.SellHolder";
-    private static final long WALL_COOLDOWN_MS = 5000;
-    private static final long BLAST_COOLDOWN_MS = 1500;
+    private static final long WALL_COOLDOWN_MS = 2000;
+    private static final long BLAST_COOLDOWN_MS = 2000;
     private static final int WALL_DISTANCE = 6;
     private static final int WALL_REACH = 5;
     private static final double WALL_INNER_RADIUS = 3.5;
@@ -59,9 +61,23 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private final Map<Material, Double> prices = new HashMap<>();
     private final Map<UUID, Long> wallReady = new HashMap<>();
     private final Map<UUID, Long> blastReady = new HashMap<>();
+    private final Map<UUID, CooldownBar> bars = new HashMap<>();
     private NamespacedKey axeKey;
     private NamespacedKey wandKey;
     private Economy economy;
+
+    /** Saved XP values while a cooldown is shown on the XP bar. */
+    private static final class CooldownBar {
+        final int savedLevel;
+        final float savedExp;
+        long start;
+        long end;
+
+        CooldownBar(int savedLevel, float savedExp) {
+            this.savedLevel = savedLevel;
+            this.savedExp = savedExp;
+        }
+    }
 
     @Override
     public void onEnable() {
@@ -87,6 +103,9 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
                 }
             }
         }, 20L, 60L);
+
+        // Drives the XP bar cooldown display every tick.
+        getServer().getScheduler().runTaskTimer(this, this::tickCooldownBars, 1L, 1L);
     }
 
     private boolean hasFireWandInInventory(Inventory inv) {
@@ -232,6 +251,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         if (placed == 0) {
             player.sendMessage(ChatColor.YELLOW + "No open air there for the fire wall.");
         }
+        startCooldownBar(player, WALL_COOLDOWN_MS);
     }
 
     private void fireBlast(Player player) {
@@ -240,6 +260,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         Fireball fireball = player.launchProjectile(Fireball.class);
         fireball.setIsIncendiary(true);
         fireball.setYield(2.5F);
+        startCooldownBar(player, BLAST_COOLDOWN_MS);
     }
 
     private boolean onCooldown(Player player, Map<UUID, Long> readyAt, long millis) {
@@ -251,6 +272,52 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         }
         readyAt.put(player.getUniqueId(), now + millis);
         return false;
+    }
+
+    /** Shows the cooldown as the XP bar filling from empty to full. The player's real XP is restored when it ends. */
+    private void startCooldownBar(Player player, long millis) {
+        long now = System.currentTimeMillis();
+        CooldownBar bar = bars.get(player.getUniqueId());
+        if (bar == null) {
+            bar = new CooldownBar(player.getLevel(), player.getExp());
+            bars.put(player.getUniqueId(), bar);
+        }
+        bar.start = now;
+        bar.end = now + millis;
+        player.setLevel(0);
+        player.setExp(0F);
+    }
+
+    private void tickCooldownBars() {
+        long now = System.currentTimeMillis();
+        Iterator<Map.Entry<UUID, CooldownBar>> it = bars.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, CooldownBar> entry = it.next();
+            Player player = getServer().getPlayer(entry.getKey());
+            CooldownBar bar = entry.getValue();
+            if (player == null) {
+                it.remove();
+                continue;
+            }
+            if (now >= bar.end) {
+                player.setLevel(bar.savedLevel);
+                player.setExp(bar.savedExp);
+                it.remove();
+            } else {
+                float progress = (float) (now - bar.start) / (float) (bar.end - bar.start);
+                player.setExp(Math.max(0F, Math.min(1F, progress)));
+            }
+        }
+    }
+
+    /** Restores real XP if a player leaves during a cooldown, so the saved level is never lost. */
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        CooldownBar bar = bars.remove(event.getPlayer().getUniqueId());
+        if (bar != null) {
+            event.getPlayer().setLevel(bar.savedLevel);
+            event.getPlayer().setExp(bar.savedExp);
+        }
     }
 
     /** Blocks EssentialsC /sell, /sellall, /sellgui and /quicksell while the player carries a Sell Axe. */
