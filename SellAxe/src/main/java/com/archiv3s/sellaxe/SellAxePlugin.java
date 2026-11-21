@@ -7,7 +7,6 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -27,7 +26,6 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -42,7 +40,6 @@ import org.bukkit.util.Vector;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -51,36 +48,21 @@ import java.util.UUID;
 public final class SellAxePlugin extends JavaPlugin implements Listener, CommandExecutor {
 
     private static final String ESSC_SELL_HOLDER = "net.godlycow.org.essc.modules.shop.sell.SellHolder";
-    private static final long WALL_COOLDOWN_MS = 2000;
-    private static final long BLAST_COOLDOWN_MS = 2000;
-    private static final long WALL_DURATION_TICKS = 160L;
+    private static final long WALL_COOLDOWN_MS = 5000;
+    private static final long BLAST_COOLDOWN_MS = 1500;
+    private static final long WALL_LIFETIME_TICKS = 100L; // 5 seconds
     private static final int WALL_DISTANCE = 6;
-    private static final int WALL_REACH = 6;
+    private static final int WALL_REACH = 5;
     private static final double WALL_INNER_RADIUS = 3.5;
     private static final double WALL_OUTER_RADIUS = 4.5;
-    private static final double WALL_BACKING_THICKNESS = 1.0;
     private static final int WALL_HEIGHT = 3;
 
     private final Map<Material, Double> prices = new HashMap<>();
     private final Map<UUID, Long> wallReady = new HashMap<>();
     private final Map<UUID, Long> blastReady = new HashMap<>();
-    private final Map<UUID, CooldownBar> bars = new HashMap<>();
     private NamespacedKey axeKey;
     private NamespacedKey wandKey;
     private Economy economy;
-
-    /** Saved XP values while a cooldown is shown on the XP bar. */
-    private static final class CooldownBar {
-        final int savedLevel;
-        final float savedExp;
-        long start;
-        long end;
-
-        CooldownBar(int savedLevel, float savedExp) {
-            this.savedLevel = savedLevel;
-            this.savedExp = savedExp;
-        }
-    }
 
     @Override
     public void onEnable() {
@@ -106,9 +88,6 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
                 }
             }
         }, 20L, 60L);
-
-        // Drives the XP bar cooldown display every tick.
-        getServer().getScheduler().runTaskTimer(this, this::tickCooldownBars, 1L, 1L);
     }
 
     private boolean hasFireWandInInventory(Inventory inv) {
@@ -224,9 +203,9 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     }
 
     /**
-     * Places a full 3-high hollow ring of fire, 9 blocks across. Fire needs solid footing, so a temporary
-     * stone backing is placed just outside the ring first. Both the backing and the fire are removed after
-     * WALL_DURATION_TICKS. Only air is ever replaced, and only air that the wall itself filled is cleared.
+     * Writes a 9-wide, 3-high ring of fire straight into the world, like WorldEdit does: setBlockData with
+     * applyPhysics=false, so no neighbour update removes the fire. Wool sits just inside the ring as backing,
+     * since fire only stays lit next to a flammable block or on solid ground. Both are removed after 5 seconds.
      */
     private void fireWall(Player player) {
         if (onCooldown(player, wallReady, WALL_COOLDOWN_MS)) return;
@@ -241,64 +220,34 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         int cx = center.getBlockX();
         int cy = player.getLocation().getBlockY();
         int cz = center.getBlockZ();
-
-        // Pass 1: temporary stone just outside the ring, so every flame has a solid face to sit on.
-        List<Block> backing = new ArrayList<>();
+        List<Block> placed = new ArrayList<>();
         for (int dx = -WALL_REACH; dx <= WALL_REACH; dx++) {
             for (int dz = -WALL_REACH; dz <= WALL_REACH; dz++) {
                 double distance = Math.sqrt(dx * dx + dz * dz);
-                if (distance <= WALL_OUTER_RADIUS || distance > WALL_OUTER_RADIUS + WALL_BACKING_THICKNESS) continue;
+                boolean fireRing = distance >= WALL_INNER_RADIUS && distance <= WALL_OUTER_RADIUS;
+                boolean backingRing = distance >= WALL_INNER_RADIUS - 1.0 && distance < WALL_INNER_RADIUS;
+                if (!fireRing && !backingRing) continue;
+                Material type = fireRing ? Material.FIRE : Material.WHITE_WOOL;
                 for (int dy = 0; dy < WALL_HEIGHT; dy++) {
                     Block block = world.getBlockAt(cx + dx, cy + dy, cz + dz);
-                    if (block.getType().isAir()) {
-                        block.setType(Material.STONE, false);
-                        backing.add(block);
-                    }
+                    if (!block.getType().isAir()) continue;
+                    block.setBlockData(type.createBlockData(), false);
+                    placed.add(block);
                 }
             }
         }
-
-        // Pass 2: fire in the full 3-high ring, only into air that has solid footing.
-        List<Block> flames = new ArrayList<>();
-        for (int dx = -WALL_REACH; dx <= WALL_REACH; dx++) {
-            for (int dz = -WALL_REACH; dz <= WALL_REACH; dz++) {
-                double distance = Math.sqrt(dx * dx + dz * dz);
-                if (distance < WALL_INNER_RADIUS || distance > WALL_OUTER_RADIUS) continue;
-                for (int dy = 0; dy < WALL_HEIGHT; dy++) {
-                    Block block = world.getBlockAt(cx + dx, cy + dy, cz + dz);
-                    if (block.getType().isAir() && hasSolidFooting(block)) {
-                        block.setType(Material.FIRE, false);
-                        flames.add(block);
-                    }
-                }
-            }
-        }
-
-        if (flames.isEmpty()) {
-            clearWall(backing, flames);
+        if (placed.isEmpty()) {
             player.sendMessage(ChatColor.YELLOW + "No open air there for the fire wall.");
-        } else {
-            getServer().getScheduler().runTaskLater(this, () -> clearWall(backing, flames), WALL_DURATION_TICKS);
+            return;
         }
-        startCooldownBar(player, WALL_COOLDOWN_MS);
-    }
-
-    /** True when at least one face the flame could attach to is solid (below, or a side). */
-    private boolean hasSolidFooting(Block block) {
-        for (BlockFace face : new BlockFace[]{BlockFace.DOWN, BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
-            if (block.getRelative(face).getType().isSolid()) return true;
-        }
-        return false;
-    }
-
-    /** Removes the temporary backing and the flames the wall placed. Anything else is left alone. */
-    private void clearWall(List<Block> backing, List<Block> flames) {
-        for (Block block : flames) {
-            if (block.getType() == Material.FIRE) block.setType(Material.AIR, false);
-        }
-        for (Block block : backing) {
-            if (block.getType() == Material.STONE) block.setType(Material.AIR, false);
-        }
+        getServer().getScheduler().runTaskLater(this, () -> {
+            for (Block block : placed) {
+                Material type = block.getType();
+                if (type == Material.FIRE || type == Material.WHITE_WOOL) {
+                    block.setBlockData(Material.AIR.createBlockData(), false);
+                }
+            }
+        }, WALL_LIFETIME_TICKS);
     }
 
     private void fireBlast(Player player) {
@@ -307,7 +256,6 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         Fireball fireball = player.launchProjectile(Fireball.class);
         fireball.setIsIncendiary(true);
         fireball.setYield(2.5F);
-        startCooldownBar(player, BLAST_COOLDOWN_MS);
     }
 
     private boolean onCooldown(Player player, Map<UUID, Long> readyAt, long millis) {
@@ -319,52 +267,6 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         }
         readyAt.put(player.getUniqueId(), now + millis);
         return false;
-    }
-
-    /** Shows the cooldown as the XP bar filling from empty to full. The player's real XP is restored when it ends. */
-    private void startCooldownBar(Player player, long millis) {
-        long now = System.currentTimeMillis();
-        CooldownBar bar = bars.get(player.getUniqueId());
-        if (bar == null) {
-            bar = new CooldownBar(player.getLevel(), player.getExp());
-            bars.put(player.getUniqueId(), bar);
-        }
-        bar.start = now;
-        bar.end = now + millis;
-        player.setLevel(0);
-        player.setExp(0F);
-    }
-
-    private void tickCooldownBars() {
-        long now = System.currentTimeMillis();
-        Iterator<Map.Entry<UUID, CooldownBar>> it = bars.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<UUID, CooldownBar> entry = it.next();
-            Player player = getServer().getPlayer(entry.getKey());
-            CooldownBar bar = entry.getValue();
-            if (player == null) {
-                it.remove();
-                continue;
-            }
-            if (now >= bar.end) {
-                player.setLevel(bar.savedLevel);
-                player.setExp(bar.savedExp);
-                it.remove();
-            } else {
-                float progress = (float) (now - bar.start) / (float) (bar.end - bar.start);
-                player.setExp(Math.max(0F, Math.min(1F, progress)));
-            }
-        }
-    }
-
-    /** Restores real XP if a player leaves during a cooldown, so the saved level is never lost. */
-    @EventHandler
-    public void onQuit(PlayerQuitEvent event) {
-        CooldownBar bar = bars.remove(event.getPlayer().getUniqueId());
-        if (bar != null) {
-            event.getPlayer().setLevel(bar.savedLevel);
-            event.getPlayer().setExp(bar.savedExp);
-        }
     }
 
     /** Blocks EssentialsC /sell, /sellall, /sellgui and /quicksell while the player carries a Sell Axe. */
