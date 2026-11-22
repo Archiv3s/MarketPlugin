@@ -32,6 +32,7 @@ import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -61,10 +62,11 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private static final String ESSC_SELL_HOLDER = "net.godlycow.org.essc.modules.shop.sell.SellHolder";
 
     private static final long SKILL_COOLDOWN_MS = 2000L;
-    private static final double WAVE_RADIUS = 10.0;         // the fire wave reaches 10 blocks out
-    private static final double WAVE_SPEED = 0.8;           // blocks per tick, so the edge arrives in about half a second
-    private static final double WAVE_DAMAGE = 2.0;          // one heart per entity the wave reaches
-    private static final int WAVE_FIRE_TICKS = 60;          // 3 seconds of burning
+    private static final double BLAZE_RADIUS = 7.0;         // Blaze (crouch): the ring of flame reaches 7 blocks out
+    private static final double BLAZE_SPEED = 0.8;          // blocks per tick, so the edge arrives in about half a second
+    private static final double BLAZE_DAMAGE = 2.0;         // one heart per entity the ring reaches
+    private static final int BLAZE_FIRE_TICKS = 60;         // 3 seconds of burning
+    private static final float FIRE_BLAST_YIELD = 2.5F;     // Fire Blast (attack): explosion size on impact
 
     private static final double ARENA_RADIUS = 37.0;        // fire presence and crack radius
     private static final long PVP_WINDOW_MS = 20_000L;      // a player hit by or hitting a player stays in PvP this long
@@ -235,15 +237,25 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         combatUntil.put(attacker.getUniqueId(), until);
     }
 
-    /**
-     * Fire Wand right-click: a wave of fire spreads out from you to 10 blocks.
-     * Crouch + right-click: a fireball along your aim.
-     */
+    /** Fire Wand crouch: Blaze, a ring of flame out to 7 blocks around you. */
     @EventHandler(ignoreCancelled = true)
-    public void onFireWandUse(PlayerInteractEvent event) {
+    public void onFireWandCrouch(PlayerToggleSneakEvent event) {
+        if (!event.isSneaking()) return;
+        Player player = event.getPlayer();
+        if (!isFireWand(player.getInventory().getItemInMainHand())) return;
+        if (!player.hasPermission("sellaxe.use")) {
+            player.sendMessage(ChatColor.RED + "You don't have permission to use this.");
+            return;
+        }
+        blaze(player);
+    }
+
+    /** Fire Wand attack on air or a block: Fire Blast, a fireball along your aim. */
+    @EventHandler(ignoreCancelled = true)
+    public void onFireWandAttack(PlayerInteractEvent event) {
         if (event.getHand() != EquipmentSlot.HAND) return;
         Action action = event.getAction();
-        if (action != Action.RIGHT_CLICK_AIR && action != Action.RIGHT_CLICK_BLOCK) return;
+        if (action != Action.LEFT_CLICK_AIR && action != Action.LEFT_CLICK_BLOCK) return;
         Player player = event.getPlayer();
         if (!isFireWand(player.getInventory().getItemInMainHand())) return;
         event.setCancelled(true);
@@ -251,19 +263,27 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             player.sendMessage(ChatColor.RED + "You don't have permission to use this.");
             return;
         }
+        fireBlast(player);
+    }
 
-        if (player.isSneaking()) {
-            fireBlast(player);          // crouch + right-click fires the blast along your aim
-        } else {
-            fireWave(player);           // right-click sends the fire wave out to 10 blocks
+    /** Fire Wand attack on an entity: Fire Blast, and the wand does no melee damage. */
+    @EventHandler(ignoreCancelled = true)
+    public void onFireWandHit(EntityDamageByEntityEvent event) {
+        if (!(event.getDamager() instanceof Player player)) return;
+        if (!isFireWand(player.getInventory().getItemInMainHand())) return;
+        event.setCancelled(true);
+        if (!player.hasPermission("sellaxe.use")) {
+            player.sendMessage(ChatColor.RED + "You don't have permission to use this.");
+            return;
         }
+        fireBlast(player);
     }
 
     /**
-     * Fire wave centred on the caster: a ring of flame expands outward to 10 blocks over about half a second.
-     * Each living entity the wave reaches catches fire and takes one heart, once. No blocks are changed.
+     * Blaze: a ring of flame expands outward to 7 blocks over about half a second, centred on the caster.
+     * Each living entity the ring reaches catches fire and takes one heart, once. No blocks are changed.
      */
-    private void fireWave(Player player) {
+    private void blaze(Player player) {
         if (!skillReady(player)) return;
         startCooldown(player);
         drawCracks(player);
@@ -276,18 +296,18 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
 
             @Override
             public void run() {
-                if (radius >= WAVE_RADIUS) {
+                if (radius >= BLAZE_RADIUS) {
                     cancel();
                     return;
                 }
-                radius = Math.min(WAVE_RADIUS, radius + WAVE_SPEED);
-                drawWaveRing(world, center, radius);
-                hurtInWave(player, center, radius, hit);
+                radius = Math.min(BLAZE_RADIUS, radius + BLAZE_SPEED);
+                drawBlazeRing(world, center, radius);
+                hurtInBlaze(player, center, radius, hit);
             }
         }.runTaskTimer(this, 0L, 1L);
     }
 
-    private void drawWaveRing(World world, Location center, double radius) {
+    private void drawBlazeRing(World world, Location center, double radius) {
         int points = Math.max(12, (int) (radius * 3));
         for (int i = 0; i < points; i++) {
             double rad = Math.toRadians(360.0 * i / points);
@@ -298,9 +318,9 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         }
     }
 
-    private void hurtInWave(Player caster, Location center, double radius, Set<UUID> hit) {
+    private void hurtInBlaze(Player caster, Location center, double radius, Set<UUID> hit) {
         World world = center.getWorld();
-        for (Entity entity : world.getNearbyEntities(center, WAVE_RADIUS + 1, 4, WAVE_RADIUS + 1)) {
+        for (Entity entity : world.getNearbyEntities(center, BLAZE_RADIUS + 1, 4, BLAZE_RADIUS + 1)) {
             if (!(entity instanceof LivingEntity living) || entity.equals(caster)) continue;
             if (hit.contains(entity.getUniqueId())) continue;
             Location at = entity.getLocation();
@@ -308,8 +328,8 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             double dz = at.getZ() - center.getZ();
             if (Math.sqrt(dx * dx + dz * dz) > radius) continue;
             hit.add(entity.getUniqueId());
-            living.setFireTicks(WAVE_FIRE_TICKS);
-            living.damage(WAVE_DAMAGE, caster);
+            living.setFireTicks(BLAZE_FIRE_TICKS);
+            living.damage(BLAZE_DAMAGE, caster);
         }
     }
 
@@ -421,7 +441,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         }
     }
 
-    /** Crouch + right-click: a large fireball flies along your aim. */
+    /** Fire Blast: a large fireball flies along your aim and explodes on impact. */
     private void fireBlast(Player player) {
         if (!skillReady(player)) return;
         startCooldown(player);
@@ -429,7 +449,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
 
         Fireball fireball = player.launchProjectile(Fireball.class);
         fireball.setIsIncendiary(true);
-        fireball.setYield(2.5F);
+        fireball.setYield(FIRE_BLAST_YIELD);
     }
 
     private boolean skillReady(Player player) {
@@ -637,7 +657,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         // Op-only. Non-ops fall through to the normal Sell Axe, so the subcommand is not revealed to them.
         if (args.length > 0 && args[0].equalsIgnoreCase("fire") && player.isOp()) {
             giveItem(player, createFireWand());
-            player.sendMessage(ChatColor.GREEN + "You received a Fire Wand. Right-click for a fire wave out to 10 blocks, crouch + right-click for a fireball along your aim.");
+            player.sendMessage(ChatColor.GREEN + "You received a Fire Wand. Crouch for Blaze, a ring of fire out to 7 blocks. Attack for Fire Blast, a fireball along your aim.");
             return true;
         }
         giveItem(player, createSellAxe());
@@ -669,8 +689,8 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         ItemMeta meta = wand.getItemMeta();
         meta.setDisplayName(ChatColor.RED + "Fire Wand");
         meta.setLore(List.of(
-                ChatColor.GRAY + "Right-click: fire wave out to 10 blocks",
-                ChatColor.GRAY + "Crouch + right-click: fireball along your aim",
+                ChatColor.GRAY + "Crouch: Blaze, a ring of fire out to 7 blocks",
+                ChatColor.GRAY + "Attack: Fire Blast, a fireball along your aim",
                 ChatColor.GRAY + "In PvP: fire presence grows across the arena"));
         meta.getPersistentDataContainer().set(wandKey, PersistentDataType.BYTE, (byte) 1);
         wand.setItemMeta(meta);
