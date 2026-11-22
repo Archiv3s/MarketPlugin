@@ -9,9 +9,7 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
-import org.bukkit.block.data.MultipleFacing;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -50,9 +48,11 @@ import org.bukkit.util.Vector;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -61,13 +61,10 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private static final String ESSC_SELL_HOLDER = "net.godlycow.org.essc.modules.shop.sell.SellHolder";
 
     private static final long SKILL_COOLDOWN_MS = 2000L;
-    private static final long WALL_LIFETIME_TICKS = 100L;   // 5 seconds
-    private static final long PANE_LIFETIME_TICKS = 60L;    // 3 seconds if not clicked
-    private static final double WALL_RADIUS = 4.0;
-    private static final double WALL_HEIGHT = 3.0;
-    private static final double WALL_DAMAGE = 2.0;          // one heart per hit
-    private static final int WALL_DAMAGE_INTERVAL = 10;     // ticks between damage checks
-    private static final int WALL_FIRE_TICKS = 60;          // 3 seconds of burning
+    private static final double WAVE_RADIUS = 10.0;         // the fire wave reaches 10 blocks out
+    private static final double WAVE_SPEED = 0.8;           // blocks per tick, so the edge arrives in about half a second
+    private static final double WAVE_DAMAGE = 2.0;          // one heart per entity the wave reaches
+    private static final int WAVE_FIRE_TICKS = 60;          // 3 seconds of burning
 
     private static final double ARENA_RADIUS = 37.0;        // fire presence and crack radius
     private static final long PVP_WINDOW_MS = 20_000L;      // a player hit by or hitting a player stays in PvP this long
@@ -81,7 +78,6 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private final Map<UUID, Long> readyAt = new HashMap<>();
     private final Map<UUID, BukkitTask> cooldownTasks = new HashMap<>();
     private final Map<UUID, XpState> savedXp = new HashMap<>();
-    private final Map<UUID, Block> activePanes = new HashMap<>();
     private final Map<UUID, Long> combatUntil = new HashMap<>();
     private final Map<UUID, Double> fightSeconds = new HashMap<>();
     private final Map<UUID, CrackField> crackFields = new HashMap<>();
@@ -239,6 +235,10 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         combatUntil.put(attacker.getUniqueId(), until);
     }
 
+    /**
+     * Fire Wand right-click: a wave of fire spreads out from you to 10 blocks.
+     * Crouch + right-click: a fireball along your aim.
+     */
     @EventHandler(ignoreCancelled = true)
     public void onFireWandUse(PlayerInteractEvent event) {
         if (event.getHand() != EquipmentSlot.HAND) return;
@@ -252,72 +252,64 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             return;
         }
 
-        Block clicked = event.getClickedBlock();
-        Block pane = activePanes.get(player.getUniqueId());
-        if (clicked != null && pane != null && clicked.equals(pane)) {
-            fireBlast(player);          // clicking the glass pane fires the blast
-        } else if (player.isSneaking()) {
-            summonPane(player);         // crouch + right-click places the glass pane
+        if (player.isSneaking()) {
+            fireBlast(player);          // crouch + right-click fires the blast along your aim
         } else {
-            fireWall(player);           // right-click makes the flame ring around you
+            fireWave(player);           // right-click sends the fire wave out to 10 blocks
         }
     }
 
     /**
-     * Flame ring centred on the caster: radius 4, height 3, lasting 5 seconds. Particles are only visuals;
-     * the server checks the ring every 10 ticks and sets living entities inside it on fire and damages them.
+     * Fire wave centred on the caster: a ring of flame expands outward to 10 blocks over about half a second.
+     * Each living entity the wave reaches catches fire and takes one heart, once. No blocks are changed.
      */
-    private void fireWall(Player player) {
+    private void fireWave(Player player) {
         if (!skillReady(player)) return;
         startCooldown(player);
         drawCracks(player);
 
         Location center = player.getLocation().clone();
         World world = center.getWorld();
+        Set<UUID> hit = new HashSet<>();
         new BukkitRunnable() {
-            int age = 0;
+            double radius = 0.0;
 
             @Override
             public void run() {
-                if (age >= WALL_LIFETIME_TICKS) {
+                if (radius >= WAVE_RADIUS) {
                     cancel();
                     return;
                 }
-                if (age % 4 == 0) {
-                    drawRing(world, center);
-                }
-                if (age % WALL_DAMAGE_INTERVAL == 0) {
-                    hurtInsideRing(player, center);
-                }
-                age++;
+                radius = Math.min(WAVE_RADIUS, radius + WAVE_SPEED);
+                drawWaveRing(world, center, radius);
+                hurtInWave(player, center, radius, hit);
             }
         }.runTaskTimer(this, 0L, 1L);
     }
 
-    private void drawRing(World world, Location center) {
-        for (int angle = 0; angle < 360; angle += 12) {
-            double rad = Math.toRadians(angle);
-            double x = center.getX() + WALL_RADIUS * Math.cos(rad);
-            double z = center.getZ() + WALL_RADIUS * Math.sin(rad);
-            for (double y = 0.2; y < WALL_HEIGHT; y += 0.8) {
-                world.spawnParticle(Particle.FLAME, x, center.getY() + y, z, 1, 0D, 0.05D, 0D, 0.01D);
-            }
+    private void drawWaveRing(World world, Location center, double radius) {
+        int points = Math.max(12, (int) (radius * 3));
+        for (int i = 0; i < points; i++) {
+            double rad = Math.toRadians(360.0 * i / points);
+            double x = center.getX() + radius * Math.cos(rad);
+            double z = center.getZ() + radius * Math.sin(rad);
+            int floorY = world.getHighestBlockYAt((int) Math.floor(x), (int) Math.floor(z));
+            world.spawnParticle(Particle.FLAME, x, floorY + 1.0, z, 2, 0.1, 0.3, 0.1, 0.01);
         }
     }
 
-    private void hurtInsideRing(Player caster, Location center) {
+    private void hurtInWave(Player caster, Location center, double radius, Set<UUID> hit) {
         World world = center.getWorld();
-        for (Entity entity : world.getNearbyEntities(center, WALL_RADIUS + 1, WALL_HEIGHT + 1, WALL_RADIUS + 1)) {
+        for (Entity entity : world.getNearbyEntities(center, WAVE_RADIUS + 1, 4, WAVE_RADIUS + 1)) {
             if (!(entity instanceof LivingEntity living) || entity.equals(caster)) continue;
+            if (hit.contains(entity.getUniqueId())) continue;
             Location at = entity.getLocation();
             double dx = at.getX() - center.getX();
             double dz = at.getZ() - center.getZ();
-            double horizontal = Math.sqrt(dx * dx + dz * dz);
-            double dy = at.getY() - center.getY();
-            if (horizontal < WALL_RADIUS - 1.0 || horizontal > WALL_RADIUS + 0.5) continue;
-            if (dy < -1.0 || dy > WALL_HEIGHT) continue;
-            living.setFireTicks(WALL_FIRE_TICKS);
-            living.damage(WALL_DAMAGE, caster);
+            if (Math.sqrt(dx * dx + dz * dz) > radius) continue;
+            hit.add(entity.getUniqueId());
+            living.setFireTicks(WAVE_FIRE_TICKS);
+            living.damage(WAVE_DAMAGE, caster);
         }
     }
 
@@ -429,61 +421,11 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         }
     }
 
-    /** Crouch + right-click: a flat glass pane in front of your head. It vanishes after 3 seconds or when clicked. */
-    private void summonPane(Player player) {
-        UUID id = player.getUniqueId();
-        Block spot = findPaneSpot(player);
-        if (spot == null) {
-            player.sendMessage(ChatColor.YELLOW + "No open air in front for the glass pane.");
-            return;
-        }
-        removePane(id);
-
-        Vector dir = player.getEyeLocation().getDirection();
-        MultipleFacing pane = (MultipleFacing) Material.GLASS_PANE.createBlockData();
-        if (Math.abs(dir.getX()) >= Math.abs(dir.getZ())) {
-            pane.setFace(BlockFace.NORTH, true);
-            pane.setFace(BlockFace.SOUTH, true);
-        } else {
-            pane.setFace(BlockFace.EAST, true);
-            pane.setFace(BlockFace.WEST, true);
-        }
-        spot.setBlockData(pane, false);
-        activePanes.put(id, spot);
-
-        final Block placed = spot;
-        getServer().getScheduler().runTaskLater(this, () -> {
-            if (placed.equals(activePanes.get(id))) {
-                removePane(id);
-            }
-        }, PANE_LIFETIME_TICKS);
-    }
-
-    private Block findPaneSpot(Player player) {
-        Location eye = player.getEyeLocation();
-        Vector dir = eye.getDirection();
-        for (double distance : new double[] {2.0, 1.5, 1.0}) {
-            Block candidate = eye.clone().add(dir.clone().multiply(distance)).getBlock();
-            if (candidate.getType().isAir()) {
-                return candidate;
-            }
-        }
-        return null;
-    }
-
-    private void removePane(UUID id) {
-        Block pane = activePanes.remove(id);
-        if (pane != null && pane.getType() == Material.GLASS_PANE) {
-            pane.setBlockData(Material.AIR.createBlockData(), false);
-        }
-    }
-
-    /** Right-click on the glass pane: a large fireball flies along your aim, and the pane is consumed. */
+    /** Crouch + right-click: a large fireball flies along your aim. */
     private void fireBlast(Player player) {
         if (!skillReady(player)) return;
         startCooldown(player);
         drawCracks(player);
-        removePane(player.getUniqueId());
 
         Fireball fireball = player.launchProjectile(Fireball.class);
         fireball.setIsIncendiary(true);
@@ -557,16 +499,9 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         if (savedXp.containsKey(id)) {
             finishCooldown(player);
         }
-        removePane(id);
         combatUntil.remove(id);
         fightSeconds.remove(id);
         crackFields.remove(id);
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onBreakSkillBlock(BlockBreakEvent event) {
-        // Keeps a glass pane from being treated as a normal block if a player breaks it.
-        activePanes.values().removeIf(pane -> pane.equals(event.getBlock()));
     }
 
     /** Blocks EssentialsC /sell, /sellall, /sellgui and /quicksell while the player carries a Sell Axe. */
@@ -702,7 +637,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         // Op-only. Non-ops fall through to the normal Sell Axe, so the subcommand is not revealed to them.
         if (args.length > 0 && args[0].equalsIgnoreCase("fire") && player.isOp()) {
             giveItem(player, createFireWand());
-            player.sendMessage(ChatColor.GREEN + "You received a Fire Wand. Right-click for a flame ring, crouch + right-click for a glass pane, then click the pane for a fire blast.");
+            player.sendMessage(ChatColor.GREEN + "You received a Fire Wand. Right-click for a fire wave out to 10 blocks, crouch + right-click for a fireball along your aim.");
             return true;
         }
         giveItem(player, createSellAxe());
@@ -734,9 +669,8 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         ItemMeta meta = wand.getItemMeta();
         meta.setDisplayName(ChatColor.RED + "Fire Wand");
         meta.setLore(List.of(
-                ChatColor.GRAY + "Right-click: flame ring around you (5 s)",
-                ChatColor.GRAY + "Crouch + right-click: glass pane ahead",
-                ChatColor.GRAY + "Click the pane: fire blast",
+                ChatColor.GRAY + "Right-click: fire wave out to 10 blocks",
+                ChatColor.GRAY + "Crouch + right-click: fireball along your aim",
                 ChatColor.GRAY + "In PvP: fire presence grows across the arena"));
         meta.getPersistentDataContainer().set(wandKey, PersistentDataType.BYTE, (byte) 1);
         wand.setItemMeta(meta);
