@@ -3,8 +3,8 @@ pages:
     items:
       '1':
         material: FLOWER_POT
-        buy: 69.46
-        sell: 17.37
+        buy: 60.0
+        sell: 20.0
       '2':
         material: JACK_O_LANTERN
         buy: 11.2
