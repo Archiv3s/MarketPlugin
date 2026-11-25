@@ -3,20 +3,20 @@ pages:
     items:
       '1':
         material: ARROW
-        buy: 2.26
-        sell: 0.57
+        buy: 10.0
+        sell: 3.0
       '2':
         material: BLAZE_POWDER
         buy: 2.63
         sell: 0.66
       '3':
         material: BLAZE_ROD
-        buy: 5
-        sell: 1.25
+        buy: 300.0
+        sell: 100.0
       '4':
         material: BONE
-        buy: 6
-        sell: 1.5
+        buy: 30.0
+        sell: 10.0
       '5':
         material: FEATHER
         buy: 6
@@ -35,8 +35,8 @@ pages:
         sell: 3.88
       '9':
         material: MAGMA_CREAM
-        buy: 8.01
-        sell: 2.01
+        buy: 200.0
+        sell: 65.0
       '10':
         material: RABBIT_FOOT
         buy: 180
@@ -47,12 +47,12 @@ pages:
         sell: 2
       '12':
         material: ROTTEN_FLESH
-        buy: 5
-        sell: 1.25
+        buy: 2.0
+        sell: 1.0
       '13':
         material: SPIDER_EYE
-        buy: 7
-        sell: 1.75
+        buy: 5.0
+        sell: 2.0
       '14':
         material: STRING
         buy: 7
