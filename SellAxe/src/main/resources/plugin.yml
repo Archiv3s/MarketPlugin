@@ -3,7 +3,7 @@ version: 1.0.0
 main: com.archiv3s.sellaxe.SellAxePlugin
 api-version: '1.21'
 depend: [Vault]
-softdepend: [EconomyShopGUI]
+softdepend: [EconomyShopGUI, EconomyShopGUI-Premium]
 commands:
   sellaxe:
     description: Get a Sell Axe that sells container contents when broken.

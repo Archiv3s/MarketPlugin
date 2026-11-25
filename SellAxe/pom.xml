@@ -38,6 +38,12 @@
       <version>1.7</version>
       <scope>provided</scope>
     </dependency>
+    <dependency>
+      <groupId>com.github.Gypopo</groupId>
+      <artifactId>EconomyShopGUI-API</artifactId>
+      <version>1.11.0</version>
+      <scope>provided</scope>
+    </dependency>
   </dependencies>
 
   <build>
