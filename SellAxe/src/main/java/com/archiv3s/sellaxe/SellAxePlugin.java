@@ -524,17 +524,33 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         crackFields.remove(id);
     }
 
-    /** Blocks EssentialsC /sell, /sellall, /sellgui and /quicksell while the player carries a Sell Axe. */
+    /**
+     * Plain /sell (and /essentialsc:sell) opens EconomyShopGUI's sell menu instead of EssentialsC's, for every player.
+     * Players holding a Sell Axe are refused, so the axe cannot be sold through /sell. /sellall, /sellgui and
+     * /quicksell are still refused while the player carries a Sell Axe.
+     */
     @EventHandler(ignoreCancelled = true)
     public void onSellCommand(PlayerCommandPreprocessEvent event) {
-        String label = event.getMessage().split(" ")[0].substring(1).toLowerCase(Locale.ROOT);
-        int colon = label.indexOf(':');
-        if (colon >= 0) label = label.substring(colon + 1);
+        String typed = event.getMessage().split(" ")[0].substring(1).toLowerCase(Locale.ROOT);
+        String prefix = "";
+        String label = typed;
+        int colon = typed.indexOf(':');
+        if (colon >= 0) {
+            prefix = typed.substring(0, colon);
+            label = typed.substring(colon + 1);
+        }
         if (!label.equals("sell") && !label.equals("sellall") && !label.equals("sellgui") && !label.equals("quicksell")) return;
+        if (prefix.equals("economyshopgui")) return;
         Player player = event.getPlayer();
-        if (!hasSellAxe(player.getInventory())) return;
-        event.setCancelled(true);
-        player.sendMessage(ChatColor.RED + "You can't use /" + label + " while carrying a Sell Axe.");
+        if (hasSellAxe(player.getInventory())) {
+            event.setCancelled(true);
+            player.sendMessage(ChatColor.RED + "You can't use /" + label + " while carrying a Sell Axe.");
+            return;
+        }
+        if (label.equals("sell")) {
+            event.setCancelled(true);
+            getServer().getScheduler().runTask(this, () -> player.performCommand("economyshopgui:sellgui"));
+        }
     }
 
     /** Blocks moving a Sell Axe into EssentialsC's sell GUI by click, shift-click, hotbar swap or drag. */
