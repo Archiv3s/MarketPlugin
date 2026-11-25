@@ -525,11 +525,11 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     }
 
     /**
-     * Plain /sell (and /essentialsc:sell) opens EconomyShopGUI's sell menu instead of EssentialsC's, for every player.
-     * Players holding a Sell Axe are refused, so the axe cannot be sold through /sell. /sellall, /sellgui and
-     * /quicksell are still refused while the player carries a Sell Axe.
+     * When EconomyShopGUI is installed, EssentialsC's /sell, /sellall, /sellgui and /quicksell are blocked for every
+     * player, and /sell opens EconomyShopGUI's sell menu instead. Players holding a Sell Axe are refused in all cases.
+     * Without EconomyShopGUI, /sell still opens that menu for players without a Sell Axe, and the other three pass through.
      */
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onSellCommand(PlayerCommandPreprocessEvent event) {
         String typed = event.getMessage().split(" ")[0].substring(1).toLowerCase(Locale.ROOT);
         String prefix = "";
@@ -545,6 +545,12 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         if (hasSellAxe(player.getInventory())) {
             event.setCancelled(true);
             player.sendMessage(ChatColor.RED + "You can't use /" + label + " while carrying a Sell Axe.");
+            return;
+        }
+        boolean shopGuiInstalled = getServer().getPluginManager().getPlugin("EconomyShopGUI") != null;
+        if (shopGuiInstalled) {
+            event.setCancelled(true);
+            getServer().getScheduler().runTask(this, () -> player.performCommand("economyshopgui:sellgui"));
             return;
         }
         if (label.equals("sell")) {
