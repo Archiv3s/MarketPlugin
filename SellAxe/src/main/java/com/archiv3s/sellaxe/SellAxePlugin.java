@@ -7,8 +7,10 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
+import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -66,6 +68,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private static final double BLAZE_SPEED = 0.8;          // blocks per tick, so the edge arrives in about half a second
     private static final double BLAZE_DAMAGE = 2.0;         // one heart per entity the ring reaches
     private static final int BLAZE_FIRE_TICKS = 60;         // 3 seconds of burning
+    private static final long BLAZE_FIRE_BLOCK_TICKS = 80L; // Blaze fire blocks burn out after 4 seconds
     private static final float FIRE_BLAST_YIELD = 2.5F;     // Fire Blast (attack): explosion size on impact
 
     private static final double ARENA_RADIUS = 37.0;        // fire presence and crack radius
@@ -281,7 +284,8 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
 
     /**
      * Blaze: a ring of flame expands outward to 7 blocks over about half a second, centred on the caster.
-     * Each living entity the ring reaches catches fire and takes one heart, once. No blocks are changed.
+     * Each living entity the ring reaches catches fire and takes one heart, once. Real fire blocks go on open
+     * ground along the ring and burn out after 4 seconds; no other blocks are changed.
      */
     private void blaze(Player player) {
         if (!skillReady(player)) return;
@@ -315,7 +319,29 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             double z = center.getZ() + radius * Math.sin(rad);
             int floorY = world.getHighestBlockYAt((int) Math.floor(x), (int) Math.floor(z));
             world.spawnParticle(Particle.FLAME, x, floorY + 1.0, z, 2, 0.1, 0.3, 0.1, 0.01);
+            placeBlazeFire(world, (int) Math.floor(x), floorY, (int) Math.floor(z));
         }
+    }
+
+    /** Puts a real fire block on open ground: only on air above a solid, non-flammable tile, with no flammable neighbours. */
+    private void placeBlazeFire(World world, int x, int floorY, int z) {
+        Block ground = world.getBlockAt(x, floorY, z);
+        Block target = ground.getRelative(BlockFace.UP);
+        if (!target.getType().isAir() || !ground.getType().isSolid() || isFlammable(ground)) return;
+        for (BlockFace face : new BlockFace[]{BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
+            if (isFlammable(target.getRelative(face))) return;
+        }
+        target.setType(Material.FIRE, false);
+        getServer().getScheduler().runTaskLater(this, () -> {
+            if (target.getType() == Material.FIRE) target.setType(Material.AIR, false);
+        }, BLAZE_FIRE_BLOCK_TICKS);
+    }
+
+    /** Wood, leaves, planks, wool and hay: blocks fire can spread into, so the blaze keeps away from them. */
+    private static boolean isFlammable(Block block) {
+        Material m = block.getType();
+        return Tag.LOGS.isTagged(m) || Tag.LEAVES.isTagged(m) || Tag.PLANKS.isTagged(m)
+                || Tag.WOOL.isTagged(m) || m == Material.HAY_BLOCK;
     }
 
     private void hurtInBlaze(Player caster, Location center, double radius, Set<UUID> hit) {
