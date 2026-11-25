@@ -1,0 +1,23 @@
+pages:
+  page1:
+    items:
+      '1':
+        material: COOKED_SALMON
+        buy: 8.0
+        sell: 4.0
+      '2':
+        material: COPPER_BLOCK
+        buy: 2250.0
+        sell: 1125.0
+      '3':
+        material: DRIED_KELP
+        buy: 8.0
+        sell: 4.0
+      '4':
+        material: DRIED_KELP_BLOCK
+        buy: 72.0
+        sell: 36.0
+      '5':
+        material: NETHERITE_BLOCK
+        buy: 31050.0
+        sell: 15525.0
