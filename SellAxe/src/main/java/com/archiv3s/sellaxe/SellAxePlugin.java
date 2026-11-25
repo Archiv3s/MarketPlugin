@@ -1,5 +1,9 @@
 package com.archiv3s.sellaxe;
 
+import me.gypopo.economyshopgui.api.EconomyShopGUIHook;
+import me.gypopo.economyshopgui.api.objects.SellPrice;
+import me.gypopo.economyshopgui.util.EcoType;
+import me.gypopo.economyshopgui.util.EconomyType;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.ChatColor;
 import org.bukkit.Color;
@@ -55,6 +59,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -89,6 +94,7 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
     private NamespacedKey axeKey;
     private NamespacedKey wandKey;
     private Economy economy;
+    private boolean shopGuiApi;
 
     private record XpState(int level, float exp) {}
 
@@ -114,6 +120,8 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
             getLogger().warning("Vault economy not found. SellAxe will refuse to break containers.");
         }
 
+        shopGuiApi = getServer().getPluginManager().getPlugin("EconomyShopGUI") != null
+                || getServer().getPluginManager().getPlugin("EconomyShopGUI-Premium") != null;
         loadPrices();
         getServer().getPluginManager().registerEvents(this, this);
         getCommand("sellaxe").setExecutor(this);
@@ -636,19 +644,41 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
         return false;
     }
 
+    /**
+     * Live Vault sell price for the whole stack from the EconomyShopGUI API, or -1 when the shop has no
+     * Vault price for it. Only call this when EconomyShopGUI is installed.
+     */
+    private double shopGuiStackPrice(Player player, ItemStack item, List<SellPrice> pending) {
+        Optional<SellPrice> sale = EconomyShopGUIHook.getSellPrice(player, item);
+        if (sale.isEmpty()) {
+            return -1;
+        }
+        double price = sale.get().getPrice(new EcoType(EconomyType.VAULT));
+        if (price <= 0) {
+            return -1;
+        }
+        pending.add(sale.get());
+        return price;
+    }
+
     private void sellInventory(Player player, Inventory inv) {
         double total = 0;
         int count = 0;
+        List<SellPrice> shopSales = new ArrayList<>();
         for (int i = 0; i < inv.getSize(); i++) {
             ItemStack item = inv.getItem(i);
             if (item == null || item.getType().isAir() || !isPlainItem(item)) {
                 continue;
             }
-            Double price = prices.get(item.getType());
-            if (price == null) {
-                continue;
+            double stackPrice = shopGuiApi ? shopGuiStackPrice(player, item, shopSales) : -1;
+            if (stackPrice < 0) {
+                Double price = prices.get(item.getType());
+                if (price == null) {
+                    continue;
+                }
+                stackPrice = price * item.getAmount();
             }
-            total += price * item.getAmount();
+            total += stackPrice;
             count += item.getAmount();
             inv.setItem(i, null);
         }
@@ -660,6 +690,10 @@ public final class SellAxePlugin extends JavaPlugin implements Listener, Command
 
         total = Math.round(total * 100.0) / 100.0;
         economy.depositPlayer(player, total);
+        // EconomyShopGUI requires updateLimits() after a sale so stock and dynamic prices stay correct.
+        for (SellPrice sale : shopSales) {
+            sale.updateLimits();
+        }
         player.sendMessage(ChatColor.GREEN + "Sold " + count + " items for " + economy.format(total) + ".");
     }
 
