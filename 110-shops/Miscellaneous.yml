@@ -3,32 +3,32 @@ pages:
     items:
       '1':
         material: ANVIL
-        buy: 713.32
-        sell: 178.33
+        buy: 2500.0
+        sell: 800.0
       '2':
         material: CARROT_ON_A_STICK
-        buy: 7.08
-        sell: 1.77
+        buy: 1200.0
+        sell: 400.0
       '3':
         material: COBWEB
         buy: 40
         sell: 10
       '4':
         material: ELYTRA
-        buy: 2415.2
-        sell: -1
+        buy: 25000.0
+        sell: 8000.0
       '5':
         material: ENDER_CHEST
-        buy: 273.12
-        sell: 68.28
+        buy: 5000.0
+        sell: 1600.0
       '6':
         material: ENDER_EYE
         buy: 10.11
         sell: 2.53
       '7':
         material: EXPERIENCE_BOTTLE
-        buy: 107.94
-        sell: -1
+        buy: 150.0
+        sell: 50.0
       '8':
         material: GLOWSTONE_DUST
         buy: 7
@@ -39,8 +39,8 @@ pages:
         sell: 17.41
       '10':
         material: LEAD
-        buy: 17.33
-        sell: 4.34
+        buy: 150.0
+        sell: 50.0
       '11':
         material: LILY_PAD
         buy: 28
@@ -51,8 +51,8 @@ pages:
         sell: 24.83
       '13':
         material: NAME_TAG
-        buy: 100
-        sell: 25
+        buy: 800.0
+        sell: 260.0
       '14':
         material: NETHER_STAR
         buy: 400
@@ -63,24 +63,24 @@ pages:
         sell: 24.03
       '16':
         material: SADDLE
-        buy: 60
-        sell: 15
+        buy: 1200.0
+        sell: 400.0
       '17':
         material: SLIME_BALL
-        buy: 5
-        sell: 1.25
+        buy: 150.0
+        sell: 50.0
       '18':
         material: SNOW
         buy: 6.62
         sell: 1.66
       '19':
         material: SNOWBALL
-        buy: 3
-        sell: 0.75
+        buy: 10.0
+        sell: 3.0
       '20':
         material: SPONGE
-        buy: 525
-        sell: 131.25
+        buy: 10.0
+        sell: 2.0
       '21':
         material: WATER_BUCKET
         buy: 69.57
@@ -91,9 +91,9 @@ pages:
         sell: 12.24
       '23':
         material: BEACON
-        buy: 551.52
-        sell: 137.88
+        buy: 25000.0
+        sell: 8000.0
       '24':
         material: END_ROD
-        buy: 2.14
-        sell: 0.54
+        buy: 350.0
+        sell: 110.0
