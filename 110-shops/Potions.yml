@@ -547,181 +547,181 @@ pages:
     items:
       '91':
         material: TIPPED_ARROW
-        buy: 21.7
-        sell: 5.43
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - fire_resistance
       '92':
         material: TIPPED_ARROW
-        buy: 23.14
-        sell: 5.79
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - harming
       '93':
         material: TIPPED_ARROW
-        buy: 24.75
-        sell: 6.19
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - healing
       '94':
         material: TIPPED_ARROW
-        buy: 27.23
-        sell: 6.81
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - invisibility
       '95':
         material: TIPPED_ARROW
-        buy: 48.59
-        sell: 12.15
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - leaping
       '96':
         material: TIPPED_ARROW
-        buy: 22.63
-        sell: 5.66
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_fire_resistance
       '97':
         material: TIPPED_ARROW
-        buy: 28.49
-        sell: 7.13
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_invisibility
       '98':
         material: TIPPED_ARROW
-        buy: 26.56
-        sell: 6.64
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_night_vision
       '99':
         material: TIPPED_ARROW
-        buy: 22.46
-        sell: 5.62
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_poison
       '100':
         material: TIPPED_ARROW
-        buy: 27.93
-        sell: 6.99
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_regeneration
       '101':
         material: TIPPED_ARROW
-        buy: 22.94
-        sell: 5.74
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_slowness
       '102':
         material: TIPPED_ARROW
-        buy: 21.74
-        sell: 5.44
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_strength
       '103':
         material: TIPPED_ARROW
-        buy: 21.32
-        sell: 5.33
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_swiftness
       '104':
         material: TIPPED_ARROW
-        buy: 22.3
-        sell: 5.58
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_water_breathing
       '105':
         material: TIPPED_ARROW
-        buy: 22.36
-        sell: 5.59
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - long_weakness
       '106':
         material: TIPPED_ARROW
-        buy: 25.41
-        sell: 6.36
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - night_vision
       '107':
         material: TIPPED_ARROW
-        buy: 21.55
-        sell: 5.39
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - poison
       '108':
         material: TIPPED_ARROW
-        buy: 26.7
-        sell: 6.68
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - regeneration
       '109':
         material: TIPPED_ARROW
-        buy: 21.99
-        sell: 5.5
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - slowness
       '110':
         material: TIPPED_ARROW
-        buy: 20.86
-        sell: 5.22
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - strength
       '111':
         material: TIPPED_ARROW
-        buy: 27.92
-        sell: 6.98
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - strong_harming
       '112':
         material: TIPPED_ARROW
-        buy: 29.64
-        sell: 7.41
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - strong_healing
       '113':
         material: TIPPED_ARROW
-        buy: 54.9
-        sell: 13.73
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - strong_leaping
       '114':
         material: TIPPED_ARROW
-        buy: 26.24
-        sell: 6.56
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - strong_poison
       '115':
         material: TIPPED_ARROW
-        buy: 31.71
-        sell: 7.93
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - strong_regeneration
       '116':
         material: TIPPED_ARROW
-        buy: 25.51
-        sell: 6.38
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - strong_strength
       '117':
         material: TIPPED_ARROW
-        buy: 25.09
-        sell: 6.28
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - strong_swiftness
       '118':
         material: TIPPED_ARROW
-        buy: 20.47
-        sell: 5.12
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - swiftness
       '119':
         material: TIPPED_ARROW
-        buy: 21.39
-        sell: 5.35
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - water_breathing
       '120':
         material: TIPPED_ARROW
-        buy: 21.45
-        sell: 5.37
+        buy: 150.0
+        sell: 50.0
         potiontypes:
         - weakness
